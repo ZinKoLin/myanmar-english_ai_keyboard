@@ -2,6 +2,7 @@ package com.zrok.myanmaraikeyboard.ime
 
 import android.graphics.Color
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.view.Gravity
@@ -64,8 +65,20 @@ class TranslationInputMethodService : InputMethodService() {
     private var textSize = 20
     private val alternatives: Map<String, List<String>>
         get() = if (shifted) BurmesePopups.shiftedDigits else BurmesePopups.main
-    private val ink = Color.rgb(30, 42, 52)
-    private val surface = Color.rgb(225, 232, 237)
+    private val isDark: Boolean
+        get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    private val ink: Int
+        get() = if (isDark) Color.rgb(235, 238, 242) else Color.rgb(30, 42, 52)
+    private val surface: Int
+        get() = if (isDark) Color.rgb(30, 32, 35) else Color.rgb(225, 232, 237)
+    private val keyFill: Int
+        get() = if (isDark) Color.rgb(48, 50, 54) else Color.rgb(249, 251, 253)
+    private val specialFill: Int
+        get() = if (isDark) Color.rgb(70, 73, 79) else Color.rgb(204, 218, 230)
+    private val editorFill: Int
+        get() = if (isDark) Color.rgb(43, 45, 49) else Color.rgb(249, 251, 253)
+    private val border: Int
+        get() = if (isDark) Color.rgb(100, 104, 112) else Color.rgb(180, 197, 210)
 
     override fun onCreateInputView(): View {
         val preferences = AppPreferences(applicationContext)
@@ -337,9 +350,9 @@ class TranslationInputMethodService : InputMethodService() {
         setHintTextColor(Color.DKGRAY)
         gravity = Gravity.TOP or Gravity.START
         background = GradientDrawable().apply {
-            setColor(Color.rgb(249, 251, 253))
+            setColor(editorFill)
             cornerRadius = dp(12).toFloat()
-            setStroke(dp(1), Color.rgb(180, 197, 210))
+            setStroke(dp(1), border)
         }
         minLines = 1
         maxLines = 2
@@ -646,7 +659,7 @@ class TranslationInputMethodService : InputMethodService() {
         includeFontPadding = false
         setTextColor(ink)
         background = GradientDrawable().apply {
-            setColor(if (special) Color.rgb(204, 218, 230) else Color.rgb(249, 251, 253))
+            setColor(if (special) specialFill else keyFill)
             cornerRadius = dp(9).toFloat()
         }
         contentDescription = label
