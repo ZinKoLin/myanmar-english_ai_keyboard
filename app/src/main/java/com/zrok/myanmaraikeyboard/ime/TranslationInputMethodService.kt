@@ -559,13 +559,26 @@ class TranslationInputMethodService : InputMethodService() {
             if (!undoing && target.text.toString() != beforeText) rememberLocalUndo(target, beforeText, beforeStart, beforeEnd, target.text.toString())
         } else {
             val before = readExternalSnapshot()
-            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
-            currentInputConnection?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL))
+            currentInputConnection?.let(::deleteExternalText)
             val after = readExternalSnapshot()
             if (!undoing && before != null && after != null && before.text.toString() != after.text.toString()) {
                 externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
             }
         }
+    }
+
+    private fun deleteExternalText(connection: android.view.inputmethod.InputConnection) {
+        val selected = connection.getSelectedText(0)
+        if (!selected.isNullOrEmpty()) {
+            connection.commitText("", 1)
+            return
+        }
+        val deletedByCodePoint = connection.deleteSurroundingTextInCodePoints(1, 0)
+        if (deletedByCodePoint) return
+        val deletedByUtf16 = connection.deleteSurroundingText(1, 0)
+        if (deletedByUtf16) return
+        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
+        connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL))
     }
 
     private fun rememberLocalUndo(target: EditText, before: String, beforeStart: Int, beforeEnd: Int, after: String) {
