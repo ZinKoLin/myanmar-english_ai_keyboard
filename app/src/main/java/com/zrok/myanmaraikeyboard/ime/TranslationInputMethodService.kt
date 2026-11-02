@@ -220,7 +220,9 @@ class TranslationInputMethodService : InputMethodService() {
                 val inserted = currentInputConnection?.commitText(preview.text.toString(), 1) == true
                 val after = readExternalSnapshot()
                 if (before != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
-                status.text = if (inserted) "Inserted into your text field" else "Tap a text field and try again"
+                if (inserted) {
+                    clearTranslationDraft("Inserted into your text field")
+                } else status.text = "Tap a text field and try again"
             }
         }
         insertButton.isEnabled = preview.text.isNotBlank()
@@ -251,7 +253,7 @@ class TranslationInputMethodService : InputMethodService() {
                     val sent = ic?.performEditorAction(action) == true
                     if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
                     if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-                    status.text = "Inserted and sent"
+                    clearTranslationDraft("Inserted and sent")
                 } else status.text = "Tap a text field and try again"
             }
         }
@@ -283,6 +285,16 @@ class TranslationInputMethodService : InputMethodService() {
         if (key.text == source.text.toString() && key.direction == direction && key.tone == tone) {
             translationMemory.remember(key, preview.text.toString())
         }
+    }
+
+    private fun clearTranslationDraft(message: String) {
+        request?.cancel()
+        translationGeneration++
+        displayedPair = null
+        source.text.clear()
+        preview.text.clear()
+        status.text = message
+        showTranslationPage(false, false)
     }
 
     private fun showTranslationPage(english: Boolean, expanded: Boolean, preserveCursor: Boolean = false) {
