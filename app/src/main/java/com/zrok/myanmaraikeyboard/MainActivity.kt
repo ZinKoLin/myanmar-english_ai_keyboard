@@ -186,8 +186,8 @@ class MainActivity : ComponentActivity() {
                         preferences.endpoint = AppPreferences.DEFAULT_ENDPOINT
                         preferences.apiKeys = listOf(apiKey1, apiKey2, apiKey3, apiKey4)
                         preferences.openRouterApiKey = openRouterApiKey
-                        saveMessage = if (preferences.apiKeys.isEmpty()) {
-                            "Please enter at least one Gemini API key first."
+                        saveMessage = if (preferences.apiKeys.isEmpty() && preferences.openRouterApiKey.isBlank()) {
+                            "Please enter a Gemini or OpenRouter API key first."
                         } else {
                             "Connection saved. Keys will fail over on 429/401/403."
                         }

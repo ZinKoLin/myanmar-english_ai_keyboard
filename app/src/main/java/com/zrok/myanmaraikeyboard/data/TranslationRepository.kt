@@ -5,6 +5,8 @@ import com.zrok.myanmaraikeyboard.model.TranslationDirection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -21,7 +23,8 @@ class TranslationRepository(private val preferences: AppPreferences) {
         }
         if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
         val apiKeys = preferences.apiKeys
-        if (apiKeys.isEmpty()) return@withContext Result.failure(TranslationException("Add at least one Gemini API key in the companion app."))
+        val openRouterKey = preferences.openRouterApiKey.trim()
+        if (apiKeys.isEmpty() && openRouterKey.isBlank()) return@withContext Result.failure(TranslationException("Add a Gemini or OpenRouter API key in the companion app."))
 
         runCatching {
             val prompt = "Translate the following ${direction.sourceLanguage} text into ${direction.targetLanguage}. " +
@@ -32,9 +35,11 @@ class TranslationRepository(private val preferences: AppPreferences) {
                 )
             )
             var lastErrorCode = 0
+            val attempts = mutableListOf<String>()
             for (model in preferences.geminiModels) {
                 var moveToNextModel = false
                 for ((index, key) in apiKeys.withIndex()) {
+                currentCoroutineContext().ensureActive()
                 val connection = (URL(preferences.endpointForModel(model)).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 10_000
@@ -48,6 +53,16 @@ class TranslationRepository(private val preferences: AppPreferences) {
                     val code = connection.responseCode
                     val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
                         ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    if (code !in 200..299) attempts.add("$model: HTTP $code")
+                    if (code == 400) {
+                        lastErrorCode = code
+                        // Invalid credentials can be reported as 400 by Gemini.
+                        val invalidKey = body.contains("API_KEY_INVALID", ignoreCase = true) ||
+                            body.contains("API key not valid", ignoreCase = true)
+                        if (invalidKey && index < apiKeys.lastIndex) continue
+                        moveToNextModel = true
+                        break
+                    }
                     if (code == 404) {
                         lastErrorCode = code
                         moveToNextModel = true
@@ -81,17 +96,18 @@ class TranslationRepository(private val preferences: AppPreferences) {
                 }
                 if (moveToNextModel) continue
             }
-            val openRouterKey = preferences.openRouterApiKey.trim()
             if (openRouterKey.isNotBlank()) {
                 var lastOpenRouterError: IOException? = null
                 for (model in AppPreferences.OPENROUTER_MODELS) {
+                    currentCoroutineContext().ensureActive()
                     try {
                         return@runCatching translateWithOpenRouter(prompt, openRouterKey, model)
                     } catch (error: IOException) {
+                        attempts.add(error.message.orEmpty())
                         lastOpenRouterError = error
                     }
                 }
-                throw lastOpenRouterError ?: IOException("OpenRouter free models unavailable.")
+                throw IOException("Translation fallback exhausted. " + attempts.distinct().joinToString("; "), lastOpenRouterError)
             }
             throw IOException("Gemini model/key fallback exhausted (last HTTP $lastErrorCode). Add an OpenRouter key for the DeepSeek free fallback, or check Gemini quota.")
         }.fold(
@@ -124,7 +140,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
             val code = connection.responseCode
             val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("OpenRouter returned HTTP $code. Free model may be rate-limited or temporarily unavailable.")
+            if (code !in 200..299) throw IOException("OpenRouter $model: HTTP $code")
             val content = JSONObject(body).optJSONArray("choices")
                 ?.optJSONObject(0)
                 ?.optJSONObject("message")
