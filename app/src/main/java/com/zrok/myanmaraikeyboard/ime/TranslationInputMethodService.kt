@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.inputmethodservice.InputMethodService
 import android.view.Gravity
 import android.view.View
@@ -21,6 +22,7 @@ import android.widget.TextView
 import android.widget.PopupWindow
 import com.zrok.myanmaraikeyboard.R
 import com.zrok.myanmaraikeyboard.LanguageSettingsActivity
+import com.zrok.myanmaraikeyboard.MainActivity
 import com.zrok.myanmaraikeyboard.data.AppPreferences
 import com.zrok.myanmaraikeyboard.data.TranslationRepository
 import com.zrok.myanmaraikeyboard.model.Tone
@@ -84,6 +86,10 @@ class TranslationInputMethodService : InputMethodService() {
         get() = if (isDark) Color.rgb(43, 45, 49) else Color.rgb(249, 251, 253)
     private val border: Int
         get() = if (isDark) Color.rgb(100, 104, 112) else Color.rgb(180, 197, 210)
+    private val accent: Int
+        get() = if (isDark) Color.rgb(168, 199, 250) else Color.rgb(11, 87, 208)
+    private val onAccent: Int
+        get() = if (isDark) Color.rgb(6, 46, 111) else Color.WHITE
 
     override fun onCreateInputView(): View {
         val preferences = AppPreferences(applicationContext)
@@ -98,22 +104,22 @@ class TranslationInputMethodService : InputMethodService() {
             configuredDirection = configured
         }
         root = column()
-        root.setPadding(dp(4), dp(4), dp(4), dp(8))
+        root.setPadding(dp(6), dp(4), dp(6), dp(8))
         root.setBackgroundColor(surface)
         val toolbar = LinearLayout(this)
-        toolbar.addView(tile("Translate", true) {
+        val translateToggle = tile("Translate", true) {
             translating = !translating
             panel.visibility = if (translating) View.VISIBLE else View.GONE
             if (translating) showTranslationPage(false, false)
             else keys.visibility = View.VISIBLE
-        }, params(1.3f, 40))
+        }
+        toolbar.addView(translateToggle, params(2f, 44))
         val toneKey = tile(tone.label, true) {}
         toneKey.setOnClickListener {
             tone = Tone.entries[(tone.ordinal + 1) % Tone.entries.size]
             toneKey.text = tone.label
         }
         toneKey.contentDescription = "Switch translation tone"
-        toolbar.addView(toneKey, params(1f, 40))
         toolbar.addView(tile("Clear", true) {
             if (translating) {
                 request?.cancel()
@@ -132,11 +138,11 @@ class TranslationInputMethodService : InputMethodService() {
                     if (ic != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
                 }
             }
-        }, params(0.8f, 40))
-        toolbar.addView(tile("Undo", true) { undoLast() }, params(0.8f, 40))
+        }, params(1f, 44))
+        toolbar.addView(tile("Undo", true) { undoLast() }, params(1f, 44))
         toolbar.addView(tile("⚙", true) {
-            startActivity(Intent(this, LanguageSettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }, params(0.5f, 40))
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.apply { contentDescription = "Keyboard settings" }, params(0.85f, 44))
         root.addView(toolbar)
         panel = column()
         directionKey = tile(direction.label, true) {}
@@ -161,7 +167,10 @@ class TranslationInputMethodService : InputMethodService() {
             status.text = "Text positions swapped • No new translation requested"
             showTranslationPage(false, false)
         }
-        panel.addView(directionKey, LinearLayout.LayoutParams(-1, dp(36)))
+        val translationHeader = LinearLayout(this)
+        translationHeader.addView(directionKey, params(1.6f, 44))
+        translationHeader.addView(toneKey, params(1f, 44))
+        panel.addView(translationHeader)
         source = editor(direction.sourceHint)
         preview = editor(direction.previewHint)
         enableTapToEdit(source, false)
@@ -177,8 +186,8 @@ class TranslationInputMethodService : InputMethodService() {
         val tabs = LinearLayout(this)
         sourceTab = tile(direction.sourceLabel, true) { showTranslationPage(false, false) }
         previewTab = tile(direction.targetLabel, true) { showTranslationPage(true, true) }
-        tabs.addView(sourceTab, params(1f, 36))
-        tabs.addView(previewTab, params(1f, 36))
+        tabs.addView(sourceTab, params(1f, 44))
+        tabs.addView(previewTab, params(1f, 44))
         panel.addView(tabs)
         panel.addView(source, LinearLayout.LayoutParams(-1, dp(90)))
         panel.addView(preview, LinearLayout.LayoutParams(-1, dp(90)))
@@ -215,13 +224,13 @@ class TranslationInputMethodService : InputMethodService() {
                     onFailure = { if (generation == translationGeneration) status.text = it.message }
                 )
             }
-        }, params(1f, 40))
+        }.apply { primaryStyle(this) }, params(1.35f, 48))
         actions.addView(tile("Edit", true) {
             if (preview.text.isNotBlank()) {
                 showTranslationPage(true, false, preserveCursor = true)
                 status.text = "Edit the translation, then tap Insert"
             }
-        }, params(0.75f, 44))
+        }, params(0.85f, 48))
         insertButton = tile("Insert ↗", true) {
             if (preview.text.isNotEmpty()) {
                 val before = readExternalSnapshot()
@@ -243,7 +252,7 @@ class TranslationInputMethodService : InputMethodService() {
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
-        actions.addView(insertButton, params(1f, 44))
+        actions.addView(insertButton, params(1f, 48))
         val sendButton = tile("➤", true) {
             val translated = preview.text.toString()
             if (translated.isNotBlank()) {
@@ -266,6 +275,7 @@ class TranslationInputMethodService : InputMethodService() {
             }
         }
         sendButton.contentDescription = "Send translation"
+        primaryStyle(sendButton)
         sendButton.isEnabled = preview.text.isNotBlank()
         sendButton.alpha = if (sendButton.isEnabled) 1f else 0.45f
         preview.addTextChangedListener(object : TextWatcher {
@@ -276,7 +286,7 @@ class TranslationInputMethodService : InputMethodService() {
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
-        actions.addView(sendButton, params(0.7f, 44))
+        actions.addView(sendButton, params(0.8f, 48))
         panel.addView(actions)
         panel.addView(status)
         panel.visibility = if (translating) View.VISIBLE else View.GONE
@@ -318,8 +328,10 @@ class TranslationInputMethodService : InputMethodService() {
         keys.visibility = if (translating && expanded) View.GONE else View.VISIBLE
         sourceTab.isSelected = !english
         previewTab.isSelected = english
-        sourceTab.text = (if (english) "" else "● ") + direction.sourceLabel
-        previewTab.text = (if (english) "● " else "") + direction.targetLabel
+        sourceTab.text = direction.sourceLabel
+        previewTab.text = direction.targetLabel
+        sourceTab.setTextColor(if (!english) onAccent else ink)
+        previewTab.setTextColor(if (english) onAccent else ink)
         if (!expanded) {
             val editingLanguage = if (english) direction.target else direction.source
             myanmar = editingLanguage.code == "my"
@@ -367,7 +379,7 @@ class TranslationInputMethodService : InputMethodService() {
         textSize = 16f
         typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
         setTextColor(ink)
-        setHintTextColor(Color.DKGRAY)
+        setHintTextColor(if (isDark) Color.LTGRAY else Color.DKGRAY)
         gravity = Gravity.TOP or Gravity.START
         background = GradientDrawable().apply {
             setColor(editorFill)
@@ -467,7 +479,7 @@ class TranslationInputMethodService : InputMethodService() {
             alternatives[value]?.let { choices ->
                 key.setOnLongClickListener { showAlternatives(key, choices); true }
             }
-            line.addView(key, params(1f, 40))
+            line.addView(key, params())
         }
         keys.addView(line)
     }
@@ -685,16 +697,18 @@ class TranslationInputMethodService : InputMethodService() {
         textSize = if (label.length > 2) 13f else this@TranslationInputMethodService.textSize.toFloat()
         setSingleLine(true)
         if (label.length <= 2) {
-            setAutoSizeTextTypeUniformWithConfiguration(11, 20, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            setAutoSizeTextTypeUniformWithConfiguration(11, this@TranslationInputMethodService.textSize, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
         gravity = Gravity.CENTER
         includeFontPadding = false
         setTextColor(ink)
-        background = GradientDrawable().apply {
-            setColor(if (special) specialFill else keyFill)
-            cornerRadius = dp(9).toFloat()
+        background = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), keyBackground(accent))
+            addState(intArrayOf(android.R.attr.state_selected), keyBackground(accent))
+            addState(intArrayOf(), keyBackground(if (special) specialFill else keyFill))
         }
+        isSoundEffectsEnabled = false
         contentDescription = label
         isClickable = true
         setOnClickListener {
@@ -702,6 +716,16 @@ class TranslationInputMethodService : InputMethodService() {
             if (keySoundEnabled) toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 18)
             action()
         }
+    }
+
+    private fun keyBackground(fill: Int) = GradientDrawable().apply {
+        setColor(fill)
+        cornerRadius = dp(12).toFloat()
+    }
+
+    private fun primaryStyle(view: TextView) {
+        view.setTextColor(onAccent)
+        view.background = keyBackground(accent)
     }
 
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
