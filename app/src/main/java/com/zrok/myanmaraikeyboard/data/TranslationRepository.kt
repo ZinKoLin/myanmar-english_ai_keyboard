@@ -24,7 +24,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
             return@withContext Result.failure(TranslationException("Network translation is disabled in Privacy settings."))
         }
         if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
-        if (preferences.azureEnabled) {
+        if (!AppPreferences.GEMINI_ONLY && preferences.azureEnabled) {
             if (preferences.azureApiKey.isBlank()) return@withContext Result.failure(TranslationException(
                 "Azure Translator key ထည့်ရန် Settings → Azure Translator ကိုဖွင့်ပါ။ F0 Free resource ဖန်တီးပြီး Key / Region ကို Save လုပ်ပါ။"
             ))
@@ -36,10 +36,11 @@ class TranslationRepository(private val preferences: AppPreferences) {
                 Result.failure(TranslationException(it.message ?: "Azure translation failed."))
             })
         }
-        val apiKeys = if (preferences.geminiEnabled) preferences.apiKeys else emptyList()
-        val openRouterKey = preferences.openRouterApiKey.trim()
+        val apiKeys = if (AppPreferences.GEMINI_ONLY || preferences.geminiEnabled) preferences.apiKeys else emptyList()
+        val openRouterKey = if (AppPreferences.GEMINI_ONLY) "" else preferences.openRouterApiKey.trim()
         if (apiKeys.isEmpty() && openRouterKey.isBlank()) return@withContext Result.failure(TranslationException(
-            if (!preferences.geminiEnabled) "Gemini is paused. Add an OpenRouter key or enable Gemini in settings."
+            if (AppPreferences.GEMINI_ONLY) "Settings မှာ Gemini API key ထည့်ပြီး Save လုပ်ပါ။"
+            else if (!preferences.geminiEnabled) "Gemini is paused. Add an OpenRouter key or enable Gemini in settings."
             else "Add a Gemini or OpenRouter API key in the companion app."
         ))
 
@@ -126,7 +127,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
                 }
                 throw IOException("Translation fallback exhausted. " + attempts.distinct().joinToString("; "), lastOpenRouterError)
             }
-            throw IOException("Gemini model/key fallback exhausted (last HTTP $lastErrorCode). Add an OpenRouter key for the DeepSeek free fallback, or check Gemini quota.")
+            throw IOException("Gemini translation failed. " + attempts.distinct().joinToString("; "))
         }.fold(
             onSuccess = { Result.success(it) },
             onFailure = {

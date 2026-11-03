@@ -127,6 +127,7 @@ class AppPreferences(context: Context) {
     }
 
     companion object {
+        const val GEMINI_ONLY = true
         const val DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
         private const val KEY_ENDPOINT = "endpoint"
         private const val KEY_API_KEY = "api_key"

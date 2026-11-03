@@ -127,7 +127,7 @@ class TranslationInputMethodService : InputMethodService() {
             toneKey.text = tone.label
         }
         toneKey.contentDescription = "Switch translation tone"
-        if (preferences.azureEnabled) {
+        if (!AppPreferences.GEMINI_ONLY && preferences.azureEnabled) {
             toneKey.text = "Azure"
             toneKey.contentDescription = "Azure standard translation; tone selection unavailable"
             toneKey.isEnabled = false

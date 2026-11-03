@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     }
+                    if (!AppPreferences.GEMINI_ONLY) {
                     SettingsCard("Azure Translator") {
                         androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Azure အသုံးပြုရန်", modifier = Modifier.weight(1f))
@@ -211,7 +212,9 @@ class MainActivity : ComponentActivity() {
                         }) { Text(if (testingConnection) "Testing…" else "Test Azure connection") }
                         if (azureEnabled) connectionResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
-                    SettingsCard("AI connection") {
+                    }
+                    SettingsCard("Gemini connection") {
+                    if (!AppPreferences.GEMINI_ONLY) {
                     Text(if (azureEnabled) "Azure mode သုံးနေသည်။ Gemini / OpenRouter ပြန်သုံးရန် Azure ကို Off လုပ်ပါ။" else "Gemini / OpenRouter mode", style = MaterialTheme.typography.bodySmall)
                     androidx.compose.foundation.layout.Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -226,7 +229,8 @@ class MainActivity : ComponentActivity() {
                             preferences.geminiEnabled = it
                         })
                     }
-                    Button(enabled = !testingConnection && !azureEnabled, onClick = {
+                    }
+                    Button(enabled = !testingConnection && (AppPreferences.GEMINI_ONLY || !azureEnabled), onClick = {
                         testingConnection = true
                         connectionResult = "Testing…"
                         connectionScope.launch {
@@ -261,15 +265,16 @@ class MainActivity : ComponentActivity() {
                         label = { Text("Gemini API key 4 (optional)") },
                         visualTransformation = PasswordVisualTransformation())
                     }
+                    if (!AppPreferences.GEMINI_ONLY) {
                     OutlinedTextField(openRouterApiKey, { openRouterApiKey = it }, Modifier.fillMaxWidth(),
                         label = { Text("OpenRouter API key (optional)") },
                         visualTransformation = PasswordVisualTransformation())
+                    }
                     Button(onClick = {
                         preferences.endpoint = AppPreferences.DEFAULT_ENDPOINT
                         preferences.apiKeys = listOf(apiKey1, apiKey2, apiKey3, apiKey4)
-                        preferences.openRouterApiKey = openRouterApiKey
-                        saveMessage = if (preferences.apiKeys.isEmpty() && preferences.openRouterApiKey.isBlank()) {
-                            "Please enter a Gemini or OpenRouter API key first."
+                        saveMessage = if (preferences.apiKeys.isEmpty()) {
+                            "Please enter a Gemini API key first."
                         } else {
                             "Connection saved. Keys will fail over on 429/401/403."
                         }
@@ -282,8 +287,6 @@ class MainActivity : ComponentActivity() {
                     if (showModels) {
                         Text("Gemini", style = MaterialTheme.typography.labelLarge)
                         preferences.geminiModels.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        Text("OpenRouter", style = MaterialTheme.typography.labelLarge)
-                        AppPreferences.OPENROUTER_MODELS.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                     }
                     SettingsCard("Privacy") {
