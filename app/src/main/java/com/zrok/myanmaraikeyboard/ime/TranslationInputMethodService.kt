@@ -45,6 +45,7 @@ class TranslationInputMethodService : InputMethodService() {
     private var configuredDirection: TranslationDirection? = null
     private val pairDrafts = mutableMapOf<TranslationDirection, Pair<String, String>>()
     private lateinit var directionKey: TextView
+    private lateinit var toneKey: TextView
     private var translationGeneration = 0L
     private val translationMemory = TranslationMemory()
     private var displayedPair: TranslationMemory.Key? = null
@@ -120,14 +121,14 @@ class TranslationInputMethodService : InputMethodService() {
             else keys.visibility = View.VISIBLE
         }
         toolbar.addView(translateToggle, params(2f, 44))
-        val toneKey = tile(tone.label, true) {}
+        toneKey = tile(tone.label, true) {}
         toneKey.setOnClickListener {
             playKeyFeedback()
             tone = Tone.entries[(tone.ordinal + 1) % Tone.entries.size]
             toneKey.text = tone.label
         }
         toneKey.contentDescription = "Switch translation tone"
-        if (!AppPreferences.GEMINI_ONLY && preferences.azureEnabled) {
+        if (preferences.azureEnabled) {
             toneKey.text = "Azure"
             toneKey.contentDescription = "Azure standard translation; tone selection unavailable"
             toneKey.isEnabled = false
@@ -782,6 +783,8 @@ class TranslationInputMethodService : InputMethodService() {
         }
         val preferences = AppPreferences(applicationContext)
         keySoundEnabled = preferences.keyboardSoundEnabled
+        toneKey.isEnabled = !preferences.azureEnabled
+        toneKey.text = if (preferences.azureEnabled) "Azure" else tone.label
         keyVibrationEnabled = preferences.keyboardVibrationEnabled
         initializeKeySound()
         if (rowHeight != preferences.keyboardRowHeight || textSize != preferences.keyboardTextSize) {

@@ -52,7 +52,7 @@ class AppPreferences(context: Context) {
         set(value) = preferences.edit().putBoolean("gemini_enabled", value).apply()
 
     var azureEnabled: Boolean
-        get() = preferences.getBoolean("azure_enabled", true)
+        get() = preferences.getBoolean("azure_enabled", false)
         set(value) = preferences.edit().putBoolean("azure_enabled", value).apply()
 
     var azureApiKey: String

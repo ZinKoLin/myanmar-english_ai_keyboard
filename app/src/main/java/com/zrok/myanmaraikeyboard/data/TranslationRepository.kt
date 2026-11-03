@@ -24,7 +24,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
             return@withContext Result.failure(TranslationException("Network translation is disabled in Privacy settings."))
         }
         if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
-        if (!AppPreferences.GEMINI_ONLY && preferences.azureEnabled) {
+        if (preferences.azureEnabled) {
             if (preferences.azureApiKey.isBlank()) return@withContext Result.failure(TranslationException(
                 "Azure Translator key ထည့်ရန် Settings → Azure Translator ကိုဖွင့်ပါ။ F0 Free resource ဖန်တီးပြီး Key / Region ကို Save လုပ်ပါ။"
             ))

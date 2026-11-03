@@ -169,7 +169,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     }
-                    if (!AppPreferences.GEMINI_ONLY) {
                     SettingsCard("Azure Translator") {
                         androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Azure အသုံးပြုရန်", modifier = Modifier.weight(1f))
@@ -212,8 +211,8 @@ class MainActivity : ComponentActivity() {
                         }) { Text(if (testingConnection) "Testing…" else "Test Azure connection") }
                         if (azureEnabled) connectionResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
-                    }
                     SettingsCard("Gemini connection") {
+                    Text(if (azureEnabled) "Azure mode • Gemini သုံးရန် Azure switch ကို Off လုပ်ပါ။" else "Gemini mode • Azure ကို နောက်မှ ဖွင့်စမ်းနိုင်သည်။", style = MaterialTheme.typography.bodySmall)
                     if (!AppPreferences.GEMINI_ONLY) {
                     Text(if (azureEnabled) "Azure mode သုံးနေသည်။ Gemini / OpenRouter ပြန်သုံးရန် Azure ကို Off လုပ်ပါ။" else "Gemini / OpenRouter mode", style = MaterialTheme.typography.bodySmall)
                     androidx.compose.foundation.layout.Row(
@@ -230,7 +229,7 @@ class MainActivity : ComponentActivity() {
                         })
                     }
                     }
-                    Button(enabled = !testingConnection && (AppPreferences.GEMINI_ONLY || !azureEnabled), onClick = {
+                    Button(enabled = !testingConnection && !azureEnabled, onClick = {
                         testingConnection = true
                         connectionResult = "Testing…"
                         connectionScope.launch {
