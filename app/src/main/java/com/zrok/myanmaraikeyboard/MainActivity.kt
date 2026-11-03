@@ -20,6 +20,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Card
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,17 +52,31 @@ class MainActivity : ComponentActivity() {
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
             var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
             var saveMessage by remember { mutableStateOf<String?>(null) }
+            var showAppearance by remember { mutableStateOf(false) }
+            var showConnection by remember { mutableStateOf(false) }
+            var showExtraKeys by remember { mutableStateOf(false) }
+            var showModels by remember { mutableStateOf(false) }
             MyanmarAiTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column(
                     modifier = Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text("Myanmar AI Keyboard")
-                    Button(onClick = { startActivity(Intent(this@MainActivity, LanguageSettingsActivity::class.java)) }) {
-                        Text("Translation languages / ဘာသာစကားများ")
+                    Text("Myanmar AI Keyboard", style = MaterialTheme.typography.headlineSmall)
+                    Text("သင့်စိတ်ကြိုက် ပြင်ဆင်ပါ", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Keyboard ဖွင့်ရန်")
                     }
-                    HorizontalDivider()
-                    Text("Keyboard appearance / လက်ကွက်အရွယ်")
+                    SettingsCard("ဘာသာစကား") {
+                    Button(onClick = { startActivity(Intent(this@MainActivity, LanguageSettingsActivity::class.java)) }) {
+                        Text("ဘာသာပြန် ဘာသာစကားရွေးရန်")
+                    }
+                    }
+                    SettingsCard("Keyboard") {
+                    TextButton(onClick = { showAppearance = !showAppearance }) {
+                        Text("လက်ကွက်နှင့် စာလုံးအရွယ် ${if (showAppearance) "▴" else "▾"}")
+                    }
+                    if (showAppearance) {
                     Text("Key height: ${keyboardRowHeight.toInt()} dp")
                     Slider(
                         value = keyboardRowHeight,
@@ -80,13 +100,14 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("Changes apply the next time the keyboard opens.")
+                    }
                     HorizontalDivider()
                     Text("Key feedback / ခလုတ်တုံ့ပြန်မှု")
                     androidx.compose.foundation.layout.Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Key sound / ခလုတ်အသံ")
+                        Text("ခလုတ်အသံ", modifier = Modifier.weight(1f))
                         Switch(checked = keyboardSoundEnabled, onCheckedChange = {
                             keyboardSoundEnabled = it
                             preferences.keyboardSoundEnabled = it
@@ -96,19 +117,26 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Key vibration / တုန်ခါမှု")
+                        Text("တုန်ခါမှု", modifier = Modifier.weight(1f))
                         Switch(checked = keyboardVibrationEnabled, onCheckedChange = {
                             keyboardVibrationEnabled = it
                             preferences.keyboardVibrationEnabled = it
                         })
                     }
-                    Text("Use your own Gemini API key. It is stored encrypted on this device and is never bundled with the app.")
-                    Text("Gemini endpoint is managed automatically for security and compatibility.")
-                    Text("Gemini API keys (up to 4, tried in order; stored encrypted)")
-                    Text("Model fallback: ${preferences.geminiModels.joinToString(" → ")}")
+                    }
+                    SettingsCard("AI connection") {
+                    Text("API keys ကို ဒီဖုန်းမှာ encrypted သိမ်းထားသည်။", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { showConnection = !showConnection }) {
+                        Text("API keys ပြင်ရန် ${if (showConnection) "▴" else "▾"}")
+                    }
+                    if (showConnection) {
                     OutlinedTextField(apiKey1, { apiKey1 = it }, Modifier.fillMaxWidth(),
                         label = { Text("Gemini API key 1") },
                         visualTransformation = PasswordVisualTransformation())
+                    TextButton(onClick = { showExtraKeys = !showExtraKeys }) {
+                        Text("အပို Gemini keys ${if (showExtraKeys) "▴" else "▾"}")
+                    }
+                    if (showExtraKeys) {
                     OutlinedTextField(apiKey2, { apiKey2 = it }, Modifier.fillMaxWidth(),
                         label = { Text("Gemini API key 2 (optional)") },
                         visualTransformation = PasswordVisualTransformation())
@@ -118,10 +146,10 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(apiKey4, { apiKey4 = it }, Modifier.fillMaxWidth(),
                         label = { Text("Gemini API key 4 (optional)") },
                         visualTransformation = PasswordVisualTransformation())
+                    }
                     OutlinedTextField(openRouterApiKey, { openRouterApiKey = it }, Modifier.fillMaxWidth(),
                         label = { Text("OpenRouter API key (optional)") },
                         visualTransformation = PasswordVisualTransformation())
-                    Text("Optional fallback: ${AppPreferences.OPENROUTER_MODELS.joinToString(" → ")}")
                     Button(onClick = {
                         preferences.endpoint = AppPreferences.DEFAULT_ENDPOINT
                         preferences.apiKeys = listOf(apiKey1, apiKey2, apiKey3, apiKey4)
@@ -133,6 +161,18 @@ class MainActivity : ComponentActivity() {
                         }
                     }) { Text("Save connection") }
                     saveMessage?.let { Text(it) }
+                    }
+                    TextButton(onClick = { showModels = !showModels }) {
+                        Text("အသုံးပြုမည့် models ${if (showModels) "▴" else "▾"}")
+                    }
+                    if (showModels) {
+                        Text("Gemini", style = MaterialTheme.typography.labelLarge)
+                        preferences.geminiModels.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        Text("OpenRouter", style = MaterialTheme.typography.labelLarge)
+                        AppPreferences.OPENROUTER_MODELS.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                    }
+                    SettingsCard("Privacy") {
                     HorizontalDivider()
                     androidx.compose.foundation.layout.Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -147,11 +187,20 @@ class MainActivity : ComponentActivity() {
                             preferences.networkTranslationEnabled = it
                         })
                     }
-                    Button(onClick = { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }) {
-                        Text("Enable keyboard")
                     }
                 }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            content()
         }
     }
 }
