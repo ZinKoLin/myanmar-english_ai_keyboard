@@ -35,6 +35,10 @@ import androidx.compose.ui.unit.dp
 import com.zrok.myanmaraikeyboard.data.AppPreferences
 import com.zrok.myanmaraikeyboard.ui.MyanmarAiTheme
 import com.zrok.myanmaraikeyboard.ui.KeyFeedback
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.zrok.myanmaraikeyboard.data.TranslationRepository
+import com.zrok.myanmaraikeyboard.model.Tone
 
 class MainActivity : ComponentActivity() {
     private val keyFeedback by lazy { KeyFeedback(this) }
@@ -62,6 +66,9 @@ class MainActivity : ComponentActivity() {
             var showConnection by remember { mutableStateOf(false) }
             var showExtraKeys by remember { mutableStateOf(false) }
             var showModels by remember { mutableStateOf(false) }
+            val connectionScope = rememberCoroutineScope()
+            var testingConnection by remember { mutableStateOf(false) }
+            var connectionResult by remember { mutableStateOf<String?>(null) }
             MyanmarAiTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column(
@@ -157,6 +164,19 @@ class MainActivity : ComponentActivity() {
                     }
                     }
                     SettingsCard("AI connection") {
+                    Button(enabled = !testingConnection, onClick = {
+                        testingConnection = true
+                        connectionResult = "Testing…"
+                        connectionScope.launch {
+                            try {
+                                connectionResult = TranslationRepository(preferences).translate("Hello", Tone.NATURAL).fold(
+                                    onSuccess = { "Connection OK: $it" },
+                                    onFailure = { it.message ?: "Connection failed" }
+                                )
+                            } finally { testingConnection = false }
+                        }
+                    }) { Text(if (testingConnection) "Testing…" else "Test saved connection") }
+                    connectionResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     Text("API keys ကို ဒီဖုန်းမှာ encrypted သိမ်းထားသည်။", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { showConnection = !showConnection }) {
                         Text("API keys ပြင်ရန် ${if (showConnection) "▴" else "▾"}")

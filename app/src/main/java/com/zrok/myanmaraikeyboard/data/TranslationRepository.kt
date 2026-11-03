@@ -53,7 +53,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
                     val code = connection.responseCode
                     val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
                         ?.bufferedReader()?.use { it.readText() }.orEmpty()
-                    if (code !in 200..299) attempts.add("$model: HTTP $code")
+                    if (code !in 200..299) attempts.add("$model: HTTP $code — ${safeError(body)}")
                     if (code == 400) {
                         lastErrorCode = code
                         // Invalid credentials can be reported as 400 by Gemini.
@@ -140,7 +140,7 @@ class TranslationRepository(private val preferences: AppPreferences) {
             val code = connection.responseCode
             val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("OpenRouter $model: HTTP $code")
+            if (code !in 200..299) throw IOException("OpenRouter $model: HTTP $code — ${safeError(body)}")
             val content = JSONObject(body).optJSONArray("choices")
                 ?.optJSONObject(0)
                 ?.optJSONObject("message")
@@ -150,6 +150,17 @@ class TranslationRepository(private val preferences: AppPreferences) {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun safeError(body: String): String {
+        val error = runCatching { JSONObject(body).optJSONObject("error") }.getOrNull()
+        var message = error?.optString("message").orEmpty()
+        if (message.isBlank()) message = "No error details from provider"
+        (preferences.apiKeys + preferences.openRouterApiKey).filter { it.isNotBlank() }.forEach {
+            message = message.replace(it, "[hidden]")
+        }
+        return message.replace(Regex("AIza[\\w-]+|sk-or-[\\w-]+"), "[hidden]")
+            .replace(Regex("\\s+"), " ").take(240)
     }
 
     class TranslationException(message: String) : Exception(message)
