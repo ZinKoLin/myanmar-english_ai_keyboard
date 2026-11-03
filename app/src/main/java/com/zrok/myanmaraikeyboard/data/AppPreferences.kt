@@ -125,8 +125,8 @@ class AppPreferences(context: Context) {
         const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
         val OPENROUTER_MODELS = listOf(
             "google/gemma-4-31b-it:free",
-            "deepseek/deepseek-v4-flash:free",
-            "qwen/qwen-2-7b-instruct:free"
+            "google/gemma-4-26b-a4b-it:free",
+            "thinkingmachines/inkling-small:free"
         )
         val DEFAULT_GEMINI_MODELS = listOf(
             "gemini-3.6-flash",
