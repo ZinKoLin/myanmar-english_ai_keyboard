@@ -31,6 +31,7 @@ import com.zrok.myanmaraikeyboard.data.TranslationRepository
 import com.zrok.myanmaraikeyboard.model.Tone
 import com.zrok.myanmaraikeyboard.model.TranslationDirection
 import com.zrok.myanmaraikeyboard.model.TranslationMemory
+import com.zrok.myanmaraikeyboard.model.WordSuggestions
 import kotlinx.coroutines.*
 
 class TranslationInputMethodService : InputMethodService() {
@@ -53,6 +54,8 @@ class TranslationInputMethodService : InputMethodService() {
     private var deleteRepeat: Job? = null
     private lateinit var root: LinearLayout
     private lateinit var keys: LinearLayout
+    private lateinit var suggestionStrip: LinearLayout
+    private var suggestionsEnabled = true
     private lateinit var panel: LinearLayout
     private lateinit var source: EditText
     private lateinit var preview: EditText
@@ -305,10 +308,23 @@ class TranslationInputMethodService : InputMethodService() {
         panel.addView(status)
         panel.visibility = if (translating) View.VISIBLE else View.GONE
         root.addView(panel)
+        suggestionStrip = LinearLayout(this).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+        root.addView(suggestionStrip)
         keys = column()
         root.addView(keys)
         renderKeys()
         showTranslationPage(false, false)
+        listOf(source, preview).forEach { editor ->
+            editor.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshSuggestions() }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        suggestionsEnabled = preferences.suggestionsEnabled
+        refreshSuggestions()
         return root
     }
 
@@ -356,6 +372,7 @@ class TranslationInputMethodService : InputMethodService() {
             renderKeys()
         }
         if (!expanded) active.requestFocus() else active.clearFocus()
+        refreshSuggestions()
     }
 
     private fun enableTapToEdit(editor: EditText, isPreview: Boolean) {
@@ -363,6 +380,7 @@ class TranslationInputMethodService : InputMethodService() {
         var downX = 0f
         var downY = 0f
         editor.setOnTouchListener { view, event ->
+            if (event.actionMasked == MotionEvent.ACTION_UP) refreshSuggestions()
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                 reviewTouch = reviewing
                 downX = event.x
@@ -409,6 +427,7 @@ class TranslationInputMethodService : InputMethodService() {
     private fun renderKeys() {
         deleteRepeat?.cancel()
         keys.removeAllViews()
+        refreshSuggestions()
         if (emojiMode) {
             keys.addView(EmojiPanel(this, ::input, ::backspace, ::enableRepeatDelete) {
                 emojiMode = false
@@ -574,6 +593,7 @@ class TranslationInputMethodService : InputMethodService() {
             shifted = false
             renderKeys()
         }
+        refreshSuggestions()
     }
 
     private fun backspace() {
@@ -599,6 +619,80 @@ class TranslationInputMethodService : InputMethodService() {
                 externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
             }
         }
+    }
+
+    private data class SuggestionContext(val before: String, val after: String, val editor: EditText?)
+
+    private fun suggestionContext(): SuggestionContext? {
+        val info = currentInputEditorInfo ?: return null
+        val kind = info.inputType and InputType.TYPE_MASK_CLASS
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        if (kind != InputType.TYPE_CLASS_TEXT || variation in listOf(
+                InputType.TYPE_TEXT_VARIATION_PASSWORD, InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+                InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD, InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+                InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS, InputType.TYPE_TEXT_VARIATION_URI
+            ) || info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0 ||
+            info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return null
+        if (translating) {
+            val editor = if (editingPreview) preview else source
+            val cursor = editor.selectionStart
+            if (cursor < 0 || cursor != editor.selectionEnd) return null
+            return SuggestionContext(editor.text.substring(maxOf(0, cursor - 128), cursor),
+                editor.text.substring(cursor, minOf(cursor + 1, editor.text.length)), editor)
+        }
+        val connection = currentInputConnection ?: return null
+        if (!connection.getSelectedText(0).isNullOrEmpty()) return null
+        return SuggestionContext(connection.getTextBeforeCursor(128, 0)?.toString() ?: return null,
+            connection.getTextAfterCursor(1, 0)?.toString() ?: return null, null)
+    }
+
+    private val updateSuggestions = Runnable {
+        if (::suggestionStrip.isInitialized) {
+            suggestionStrip.removeAllViews()
+            val context = if (suggestionsEnabled && !symbols && !emojiMode && !(translating && reviewing)) suggestionContext() else null
+            val match = context?.let { WordSuggestions.suggest(it.before, it.after, myanmar) }
+            suggestionStrip.visibility = if (match?.words.isNullOrEmpty()) View.GONE else View.VISIBLE
+            match?.words?.forEach { word ->
+                suggestionStrip.addView(tile(word) {
+                    if (context != null && suggestionContext() == context) {
+                        val prefix = match.prefix
+                        val editor = context.editor
+                        if (editor != null) {
+                            val cursor = editor.selectionStart
+                            val before = editor.text.toString()
+                            editor.text.replace(cursor - prefix.length, cursor, word)
+                            editor.setSelection(cursor - prefix.length + word.length)
+                            rememberLocalUndo(editor, before, cursor, cursor, editor.text.toString())
+                        } else {
+                            currentInputConnection?.let { connection ->
+                                connection.beginBatchEdit()
+                                try {
+                                    connection.finishComposingText()
+                                    if (prefix.isEmpty() || connection.deleteSurroundingText(prefix.length, 0)) connection.commitText(word, 1)
+                                } finally { connection.endBatchEdit() }
+                            }
+                        }
+                        pendingPreVowel = false
+                        refreshSuggestions()
+                    }
+                }.apply {
+                    textSize = 15f
+                    contentDescription = "Use suggestion $word"
+                    setAutoSizeTextTypeUniformWithConfiguration(11, 17, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+                }, params(1f, 44))
+            }
+        }
+    }
+
+    private fun refreshSuggestions() {
+        if (!::root.isInitialized) return
+        root.removeCallbacks(updateSuggestions)
+        root.post(updateSuggestions)
+    }
+
+    override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        refreshSuggestions()
     }
 
     private fun deleteExternalText(connection: android.view.inputmethod.InputConnection) {
@@ -700,6 +794,8 @@ class TranslationInputMethodService : InputMethodService() {
 
     override fun onFinishInput() {
         deleteRepeat?.cancel()
+        if (::root.isInitialized) root.removeCallbacks(updateSuggestions)
+        if (::suggestionStrip.isInitialized) suggestionStrip.visibility = View.GONE
         super.onFinishInput()
     }
 
@@ -783,6 +879,8 @@ class TranslationInputMethodService : InputMethodService() {
         }
         val preferences = AppPreferences(applicationContext)
         keySoundEnabled = preferences.keyboardSoundEnabled
+        suggestionsEnabled = preferences.suggestionsEnabled
+        refreshSuggestions()
         toneKey.isEnabled = !preferences.azureEnabled
         toneKey.text = if (preferences.azureEnabled) "Azure" else tone.label
         keyVibrationEnabled = preferences.keyboardVibrationEnabled

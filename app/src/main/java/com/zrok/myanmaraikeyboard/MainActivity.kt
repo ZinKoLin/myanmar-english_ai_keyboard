@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
             var keyboardRowHeight by remember { mutableStateOf(preferences.keyboardRowHeight.toFloat()) }
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
+            var suggestionsEnabled by remember { mutableStateOf(preferences.suggestionsEnabled) }
             var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
             var keyboardTone by remember { mutableStateOf(preferences.keyboardTone) }
             var vibrationDuration by remember { mutableStateOf(preferences.vibrationDuration.toFloat()) }
@@ -92,6 +93,16 @@ class MainActivity : ComponentActivity() {
                     }
                     }
                     SettingsCard("Keyboard") {
+                    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text("စကားလုံး အကြံပြုချက်")
+                            Text("မြန်မာ / English • Offline", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = suggestionsEnabled, onCheckedChange = {
+                            suggestionsEnabled = it
+                            preferences.suggestionsEnabled = it
+                        })
+                    }
                     TextButton(onClick = { showAppearance = !showAppearance }) {
                         Text("လက်ကွက်နှင့် စာလုံးအရွယ် ${if (showAppearance) "▴" else "▾"}")
                     }

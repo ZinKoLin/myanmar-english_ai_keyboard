@@ -75,6 +75,10 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean(KEY_KEYBOARD_SOUND, true)
         set(value) = preferences.edit().putBoolean(KEY_KEYBOARD_SOUND, value).apply()
 
+    var suggestionsEnabled: Boolean
+        get() = preferences.getBoolean("suggestions_enabled", true)
+        set(value) = preferences.edit().putBoolean("suggestions_enabled", value).apply()
+
     var keyboardTone: Int
         get() = preferences.getInt("keyboard_tone", 0).coerceIn(0, 2)
         set(value) = preferences.edit().putInt("keyboard_tone", value.coerceIn(0, 2)).apply()
