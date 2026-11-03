@@ -24,6 +24,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.PopupWindow
+import android.app.Dialog
+import android.view.Window
+import android.view.WindowManager
+import android.widget.ScrollView
 import com.zrok.myanmaraikeyboard.R
 import com.zrok.myanmaraikeyboard.LanguageSettingsActivity
 import com.zrok.myanmaraikeyboard.MainActivity
@@ -61,9 +65,7 @@ class TranslationInputMethodService : InputMethodService() {
     private lateinit var panel: LinearLayout
     private lateinit var source: EditText
     private lateinit var preview: EditText
-    private lateinit var previewResizeRow: LinearLayout
-    private lateinit var resizeHandle: TextView
-    private var previewHeight = 210
+    private var fullPreviewDialog: Dialog? = null
     private lateinit var status: TextView
     private lateinit var sourceTab: TextView
     private lateinit var previewTab: TextView
@@ -109,7 +111,6 @@ class TranslationInputMethodService : InputMethodService() {
     override fun onCreateInputView(): View {
         val preferences = AppPreferences(applicationContext)
         rowHeight = preferences.keyboardRowHeight
-        previewHeight = preferences.previewHeight
         textSize = preferences.keyboardTextSize
         keySoundEnabled = preferences.keyboardSoundEnabled
         keyVibrationEnabled = preferences.keyboardVibrationEnabled
@@ -211,46 +212,10 @@ class TranslationInputMethodService : InputMethodService() {
         previewTab = tile(direction.targetLabel, true) { showTranslationPage(true, true) }
         tabs.addView(sourceTab, params(1f, 44))
         tabs.addView(previewTab, params(1f, 44))
+        tabs.addView(tile("⛶", true) { showFullPreview() }.apply {
+            contentDescription = "Full screen translation preview"
+        }, params(0.4f, 44))
         panel.addView(tabs)
-        previewResizeRow = LinearLayout(this)
-        resizeHandle = tile("↕ Preview အရွယ်ချိန်ရန်", true) { resizePreview(210, true) }
-        resizeHandle.contentDescription = "Drag up to enlarge preview, down to shrink; tap to reset"
-        var dragY = 0f
-        var dragHeight = 0
-        var dragging = false
-        resizeHandle.setOnTouchListener { view, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    dragY = event.rawY
-                    dragHeight = preview.height
-                    dragging = false
-                    view.parent.requestDisallowInterceptTouchEvent(true)
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val delta = dragY - event.rawY
-                    if (kotlin.math.abs(delta) > android.view.ViewConfiguration.get(this).scaledTouchSlop) dragging = true
-                    if (dragging) resizePreview(((dragHeight + delta) / resources.displayMetrics.density).toInt(), false)
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (dragging) AppPreferences(applicationContext).previewHeight = previewHeight else view.performClick()
-                    view.parent.requestDisallowInterceptTouchEvent(false)
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    resizePreview((dragHeight / resources.displayMetrics.density).toInt(), false)
-                    view.parent.requestDisallowInterceptTouchEvent(false)
-                }
-            }
-            true
-        }
-        previewResizeRow.addView(tile("−", true) { resizePreview(previewHeight - 30, true) }.apply {
-            contentDescription = "Shrink preview"
-        }, params(0.7f, 44))
-        previewResizeRow.addView(resizeHandle, params(3f, 44))
-        previewResizeRow.addView(tile("+", true) { resizePreview(previewHeight + 30, true) }.apply {
-            contentDescription = "Enlarge preview"
-        }, params(0.7f, 44))
-        previewResizeRow.visibility = View.GONE
-        panel.addView(previewResizeRow)
         panel.addView(source, LinearLayout.LayoutParams(-1, dp(90)))
         panel.addView(preview, LinearLayout.LayoutParams(-1, dp(90)))
         val actions = LinearLayout(this)
@@ -398,8 +363,7 @@ class TranslationInputMethodService : InputMethodService() {
         source.visibility = if (english) View.GONE else View.VISIBLE
         preview.visibility = if (english) View.VISIBLE else View.GONE
         val active = if (english) preview else source
-        previewResizeRow.visibility = if (english && expanded) View.VISIBLE else View.GONE
-        active.layoutParams = LinearLayout.LayoutParams(-1, dp(if (english && expanded) boundedPreviewHeight(previewHeight) else if (expanded) 210 else 90))
+        active.layoutParams = LinearLayout.LayoutParams(-1, dp(if (expanded) 210 else 90))
         active.maxLines = if (expanded) Int.MAX_VALUE else 3
         if (!preserveCursor) active.setSelection(active.text.length)
         keys.visibility = if (translating && expanded) View.GONE else View.VISIBLE
@@ -422,17 +386,63 @@ class TranslationInputMethodService : InputMethodService() {
         refreshSuggestions()
     }
 
-    private fun boundedPreviewHeight(height: Int): Int {
-        val screenDp = resources.displayMetrics.heightPixels / resources.displayMetrics.density
-        val maximum = (screenDp * 0.85f - 280).toInt().coerceIn(100, 480)
-        return height.coerceIn(100, maximum)
-    }
-
-    private fun resizePreview(height: Int, save: Boolean) {
-        previewHeight = boundedPreviewHeight(height)
-        preview.layoutParams = LinearLayout.LayoutParams(-1, dp(previewHeight))
-        resizeHandle.text = "↕ Preview • $previewHeight"
-        if (save) AppPreferences(applicationContext).previewHeight = previewHeight
+    private fun showFullPreview() {
+        fullPreviewDialog?.dismiss()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val content = column().apply {
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+            setBackgroundColor(surface)
+        }
+        val header = LinearLayout(this)
+        header.addView(TextView(this).apply {
+            text = direction.targetLabel
+            textSize = 18f
+            setTextColor(ink)
+            gravity = Gravity.CENTER_VERTICAL
+        }, params(2f, 48))
+        header.addView(tile("⛶ Close", true) { dialog.dismiss() }.apply {
+            contentDescription = "Exit full screen preview"
+        }, params(1f, 48))
+        content.addView(header)
+        val readingText = TextView(this).apply {
+            text = preview.text.toString().ifBlank { direction.previewHint }
+            textSize = 20f
+            setTextColor(ink)
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+            setTextIsSelectable(true)
+            setLineSpacing(dp(5).toFloat(), 1f)
+            setPadding(dp(12), dp(16), dp(12), dp(16))
+        }
+        content.addView(ScrollView(this).apply { addView(readingText) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        val actions = LinearLayout(this)
+        actions.addView(tile("Edit", true) {
+            dialog.dismiss()
+            translating = true
+            panel.visibility = View.VISIBLE
+            showTranslationPage(true, false, preserveCursor = true)
+        }, params(1f, 48))
+        actions.addView(tile("Insert ↗", true) {
+            dialog.dismiss()
+            insertButton.performClick()
+        }.apply {
+            primaryStyle(this)
+            isEnabled = preview.text.isNotBlank()
+            alpha = if (isEnabled) 1f else 0.45f
+        }, params(1f, 48))
+        content.addView(actions)
+        dialog.setContentView(content)
+        dialog.window?.apply {
+            setType(WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG)
+            attributes = attributes.apply { token = root.windowToken }
+            addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+            setBackgroundDrawable(keyBackground(surface))
+        }
+        dialog.setOnDismissListener { fullPreviewDialog = null }
+        fullPreviewDialog = dialog
+        dialog.show()
+        dialog.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
     }
 
     private fun enableTapToEdit(editor: EditText, isPreview: Boolean) {
@@ -883,6 +893,7 @@ class TranslationInputMethodService : InputMethodService() {
 
     override fun onFinishInput() {
         deleteRepeat?.cancel()
+        fullPreviewDialog?.dismiss()
         lastSuggestionState = null
         if (::root.isInitialized) root.removeCallbacks(updateSuggestions)
         if (::suggestionStrip.isInitialized) suggestionStrip.visibility = View.GONE
@@ -982,6 +993,7 @@ class TranslationInputMethodService : InputMethodService() {
         }
     }
     override fun onDestroy() {
+        fullPreviewDialog?.dismiss()
         translationMemory.clear()
         characterPopup?.dismiss()
         toneGenerator?.release()
