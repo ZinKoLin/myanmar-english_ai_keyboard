@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.media.AudioAttributes
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.InsetDrawable
 import android.inputmethodservice.InputMethodService
 import android.view.Gravity
 import android.view.View
@@ -56,6 +57,7 @@ class TranslationInputMethodService : InputMethodService() {
     private lateinit var keys: LinearLayout
     private lateinit var suggestionStrip: LinearLayout
     private var suggestionsEnabled = true
+    private var lastSuggestionState: Pair<SuggestionContext?, WordSuggestions.Match?>? = null
     private lateinit var panel: LinearLayout
     private lateinit var source: EditText
     private lateinit var preview: EditText
@@ -118,7 +120,7 @@ class TranslationInputMethodService : InputMethodService() {
             configuredDirection = configured
         }
         root = column()
-        root.setPadding(dp(6), dp(4), dp(6), dp(8))
+        root.setPadding(dp(2), dp(4), dp(2), dp(8))
         root.setBackgroundColor(surface)
         val toolbar = LinearLayout(this)
         val translateToggle = tile("Translate", true) {
@@ -354,6 +356,7 @@ class TranslationInputMethodService : InputMethodService() {
         suggestionStrip = LinearLayout(this).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
+        lastSuggestionState = null
         root.addView(suggestionStrip)
         keys = column()
         root.addView(keys)
@@ -560,6 +563,32 @@ class TranslationInputMethodService : InputMethodService() {
         bottom.addView(tile(if (myanmar) "။" else ".", true) { input(if (myanmar) "။" else ".") }, params(0.8f))
         bottom.addView(tile("↵", true) { input("\n") }, params(1.2f))
         keys.addView(bottom)
+        widenTypingKeys()
+    }
+
+    private fun widenTypingKeys() {
+        // Each key owns the whole cell, including the small visual gap around it.
+        // Android's normal touch/long-press handling remains in charge of selection.
+        for (rowIndex in 0 until keys.childCount) {
+            val row = keys.getChildAt(rowIndex) as? LinearLayout ?: continue
+            row.isMotionEventSplittingEnabled = true
+            for (keyIndex in 0 until row.childCount) {
+                val key = row.getChildAt(keyIndex) as? TextView ?: continue
+                val layout = key.layoutParams as LinearLayout.LayoutParams
+                layout.setMargins(0, 0, 0, 0)
+                layout.height = dp(rowHeight + 6)
+                key.layoutParams = layout
+                key.background = InsetDrawable(key.background, dp(1), dp(3), dp(1), dp(3))
+                key.setPadding(0, 0, 0, 0)
+                if (key.text.toString() != "⌫") {
+                    key.setOnTouchListener { view, event ->
+                        if (event.actionMasked == MotionEvent.ACTION_DOWN) view.isPressed = true
+                        // Returning false preserves click cancellation, long-press and accessibility.
+                        false
+                    }
+                }
+            }
+        }
     }
 
     private fun addRow(values: List<String>, special: Boolean) {
@@ -705,9 +734,12 @@ class TranslationInputMethodService : InputMethodService() {
 
     private val updateSuggestions = Runnable {
         if (::suggestionStrip.isInitialized) {
-            suggestionStrip.removeAllViews()
             val context = if (suggestionsEnabled && !symbols && !emojiMode && !(translating && reviewing)) suggestionContext() else null
             val match = context?.let { WordSuggestions.suggest(it.before, it.after, myanmar) }
+            val state = context to match
+            if (state == lastSuggestionState) return@Runnable
+            lastSuggestionState = state
+            suggestionStrip.removeAllViews()
             suggestionStrip.visibility = if (match?.words.isNullOrEmpty()) View.GONE else View.VISIBLE
             match?.words?.forEach { word ->
                 suggestionStrip.addView(tile(word) {
@@ -851,6 +883,7 @@ class TranslationInputMethodService : InputMethodService() {
 
     override fun onFinishInput() {
         deleteRepeat?.cancel()
+        lastSuggestionState = null
         if (::root.isInitialized) root.removeCallbacks(updateSuggestions)
         if (::suggestionStrip.isInitialized) suggestionStrip.visibility = View.GONE
         super.onFinishInput()
