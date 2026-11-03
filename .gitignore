@@ -17,5 +17,7 @@ keystore.properties
 !.env.example
 captures/
 zrok-main.png
+.kotlin/
+zrok-*.xml
 *.png
 !popup-audit/*-sheet.png

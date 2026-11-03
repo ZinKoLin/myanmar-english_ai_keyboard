@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
             var apiKey4 by remember { mutableStateOf(savedKeys.getOrNull(3).orEmpty()) }
             var openRouterApiKey by remember { mutableStateOf(preferences.openRouterApiKey) }
             var networkEnabled by remember { mutableStateOf(preferences.networkTranslationEnabled) }
+            var geminiEnabled by remember { mutableStateOf(preferences.geminiEnabled) }
             var keyboardRowHeight by remember { mutableStateOf(preferences.keyboardRowHeight.toFloat()) }
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
@@ -164,6 +165,19 @@ class MainActivity : ComponentActivity() {
                     }
                     }
                     SettingsCard("AI connection") {
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Gemini အသုံးပြုရန်")
+                            Text(if (geminiEnabled) "Gemini → OpenRouter" else "OpenRouter only", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = geminiEnabled, onCheckedChange = {
+                            geminiEnabled = it
+                            preferences.geminiEnabled = it
+                        })
+                    }
                     Button(enabled = !testingConnection, onClick = {
                         testingConnection = true
                         connectionResult = "Testing…"

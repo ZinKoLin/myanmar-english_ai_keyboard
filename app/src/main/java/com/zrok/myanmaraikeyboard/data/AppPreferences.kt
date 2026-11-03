@@ -47,6 +47,10 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean(KEY_NETWORK_ENABLED, true)
         set(value) = preferences.edit().putBoolean(KEY_NETWORK_ENABLED, value).apply()
 
+    var geminiEnabled: Boolean
+        get() = preferences.getBoolean("gemini_enabled", false)
+        set(value) = preferences.edit().putBoolean("gemini_enabled", value).apply()
+
     var keyboardRowHeight: Int
         get() = preferences.getInt(KEY_KEYBOARD_ROW_HEIGHT, 50).coerceIn(48, 64)
         set(value) = preferences.edit().putInt(KEY_KEYBOARD_ROW_HEIGHT, value.coerceIn(48, 64)).apply()
@@ -125,8 +129,8 @@ class AppPreferences(context: Context) {
         const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
         val OPENROUTER_MODELS = listOf(
             "google/gemma-4-31b-it:free",
-            "google/gemma-4-26b-a4b-it:free",
-            "thinkingmachines/inkling-small:free"
+            "deepseek/deepseek-v4-flash:free",
+            "qwen/qwen-2-7b-instruct:free"
         )
         val DEFAULT_GEMINI_MODELS = listOf(
             "gemini-3.6-flash",

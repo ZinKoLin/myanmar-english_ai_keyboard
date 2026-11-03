@@ -22,9 +22,12 @@ class TranslationRepository(private val preferences: AppPreferences) {
             return@withContext Result.failure(TranslationException("Network translation is disabled in Privacy settings."))
         }
         if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
-        val apiKeys = preferences.apiKeys
+        val apiKeys = if (preferences.geminiEnabled) preferences.apiKeys else emptyList()
         val openRouterKey = preferences.openRouterApiKey.trim()
-        if (apiKeys.isEmpty() && openRouterKey.isBlank()) return@withContext Result.failure(TranslationException("Add a Gemini or OpenRouter API key in the companion app."))
+        if (apiKeys.isEmpty() && openRouterKey.isBlank()) return@withContext Result.failure(TranslationException(
+            if (!preferences.geminiEnabled) "Gemini is paused. Add an OpenRouter key or enable Gemini in settings."
+            else "Add a Gemini or OpenRouter API key in the companion app."
+        ))
 
         runCatching {
             val prompt = "Translate the following ${direction.sourceLanguage} text into ${direction.targetLanguage}. " +
