@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
             var suggestionsEnabled by remember { mutableStateOf(preferences.suggestionsEnabled) }
+            var autoImportCopiedText by remember { mutableStateOf(preferences.autoImportCopiedText) }
             var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
             var keyboardTone by remember { mutableStateOf(preferences.keyboardTone) }
             var vibrationDuration by remember { mutableStateOf(preferences.vibrationDuration.toFloat()) }
@@ -300,6 +301,20 @@ class MainActivity : ComponentActivity() {
                     }
                     }
                     SettingsCard("Privacy") {
+                    HorizontalDivider()
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Copy လုပ်တာနဲ့ Translate box ထဲထည့်ရန်")
+                            Text("Keyboard ဖွင့်ထားချိန် clipboard စာသားကို ထည့်မယ်။ ပို့ဖို့ Translate ကို ကိုယ်တိုင်နှိပ်ပါ။")
+                        }
+                        Switch(checked = autoImportCopiedText, onCheckedChange = {
+                            autoImportCopiedText = it
+                            preferences.autoImportCopiedText = it
+                        })
+                    }
                     HorizontalDivider()
                     androidx.compose.foundation.layout.Row(
                         modifier = Modifier.fillMaxWidth(),

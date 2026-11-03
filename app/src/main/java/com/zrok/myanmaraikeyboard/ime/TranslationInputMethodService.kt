@@ -2,6 +2,9 @@ package com.zrok.myanmaraikeyboard.ime
 
 import android.graphics.Color
 import android.content.Intent
+import android.content.ClipboardManager
+import android.content.ClipDescription
+import android.os.Build
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -66,6 +69,40 @@ class TranslationInputMethodService : InputMethodService() {
     private lateinit var source: EditText
     private lateinit var preview: EditText
     private var fullPreviewDialog: Dialog? = null
+    private var clipboardListenerRegistered = false
+    private var lastImportedClipboardText: String? = null
+    private val clipboardManager by lazy { getSystemService(CLIPBOARD_SERVICE) as ClipboardManager }
+    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
+        if (!clipboardListenerRegistered || !AppPreferences(applicationContext).autoImportCopiedText) return@OnPrimaryClipChangedListener
+        val editorType = currentInputEditorInfo?.inputType ?: return@OnPrimaryClipChangedListener
+        val variation = editorType and InputType.TYPE_MASK_VARIATION
+        val isPassword = (editorType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT &&
+            variation in setOf(InputType.TYPE_TEXT_VARIATION_PASSWORD, InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD, InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD) ||
+            (editorType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_NUMBER && variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        if (isPassword) return@OnPrimaryClipChangedListener
+        val copiedText = runCatching {
+            val clip = clipboardManager.primaryClip ?: return@runCatching null
+            if (clip.itemCount == 0 || clip.description.hasMimeType("text/plain").not() && clip.description.hasMimeType("text/html").not()) return@runCatching null
+            if (Build.VERSION.SDK_INT >= 33 && clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true) return@runCatching null
+            clip.getItemAt(0).coerceToText(applicationContext)?.toString()
+        }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 20_000 } ?: return@OnPrimaryClipChangedListener
+        if (copiedText == lastImportedClipboardText) return@OnPrimaryClipChangedListener
+        lastImportedClipboardText = copiedText
+        if (::root.isInitialized) root.post {
+            if (!clipboardListenerRegistered || !AppPreferences(applicationContext).autoImportCopiedText || !::source.isInitialized) return@post
+            request?.cancel()
+            translationGeneration++
+            rememberReviewedPair()
+            displayedPair = null
+            translating = true
+            source.setText(copiedText)
+            source.setSelection(source.text.length)
+            preview.text.clear()
+            status.text = "Copied text added • Tap Translate when ready"
+            panel.visibility = View.VISIBLE
+            showTranslationPage(false, false)
+        }
+    }
     private lateinit var status: TextView
     private lateinit var sourceTab: TextView
     private lateinit var previewTab: TextView
@@ -888,6 +925,7 @@ class TranslationInputMethodService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         deleteRepeat?.cancel()
+        stopClipboardMonitoring()
         super.onFinishInputView(finishingInput)
     }
 
@@ -979,6 +1017,7 @@ class TranslationInputMethodService : InputMethodService() {
             showTranslationPage(false, false)
         }
         val preferences = AppPreferences(applicationContext)
+        if (preferences.autoImportCopiedText) startClipboardMonitoring() else stopClipboardMonitoring()
         keySoundEnabled = preferences.keyboardSoundEnabled
         suggestionsEnabled = preferences.suggestionsEnabled
         refreshSuggestions()
@@ -992,7 +1031,21 @@ class TranslationInputMethodService : InputMethodService() {
             renderKeys()
         }
     }
+
+    private fun startClipboardMonitoring() {
+        if (clipboardListenerRegistered) return
+        runCatching { clipboardManager.addPrimaryClipChangedListener(clipboardListener) }
+            .onSuccess { clipboardListenerRegistered = true }
+    }
+
+    private fun stopClipboardMonitoring() {
+        if (!clipboardListenerRegistered) return
+        runCatching { clipboardManager.removePrimaryClipChangedListener(clipboardListener) }
+        clipboardListenerRegistered = false
+        lastImportedClipboardText = null
+    }
     override fun onDestroy() {
+        stopClipboardMonitoring()
         fullPreviewDialog?.dismiss()
         translationMemory.clear()
         characterPopup?.dismiss()

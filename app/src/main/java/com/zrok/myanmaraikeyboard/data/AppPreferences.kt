@@ -83,6 +83,10 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean("suggestions_enabled", true)
         set(value) = preferences.edit().putBoolean("suggestions_enabled", value).apply()
 
+    var autoImportCopiedText: Boolean
+        get() = preferences.getBoolean("auto_import_copied_text", true)
+        set(value) = preferences.edit().putBoolean("auto_import_copied_text", value).apply()
+
     var keyboardTone: Int
         get() = preferences.getInt("keyboard_tone", 0).coerceIn(0, 2)
         set(value) = preferences.edit().putInt("keyboard_tone", value.coerceIn(0, 2)).apply()
