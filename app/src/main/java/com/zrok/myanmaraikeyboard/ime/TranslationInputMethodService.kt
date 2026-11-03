@@ -3,6 +3,8 @@ package com.zrok.myanmaraikeyboard.ime
 import android.graphics.Color
 import android.content.Intent
 import android.content.res.Configuration
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.view.Gravity
@@ -63,6 +65,9 @@ class TranslationInputMethodService : InputMethodService() {
     private var externalUndo: ExternalUndo? = null
     private var rowHeight = 50
     private var textSize = 20
+    private var keySoundEnabled = true
+    private var keyVibrationEnabled = true
+    private var toneGenerator: ToneGenerator? = null
     private val alternatives: Map<String, List<String>>
         get() = if (shifted) BurmesePopups.shiftedDigits else BurmesePopups.main
     private val isDark: Boolean
@@ -84,6 +89,9 @@ class TranslationInputMethodService : InputMethodService() {
         val preferences = AppPreferences(applicationContext)
         rowHeight = preferences.keyboardRowHeight
         textSize = preferences.keyboardTextSize
+        keySoundEnabled = preferences.keyboardSoundEnabled
+        keyVibrationEnabled = preferences.keyboardVibrationEnabled
+        if (keySoundEnabled && toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 45)
         val configured = AppPreferences(applicationContext).translationDirection
         if (configuredDirection == null) {
             direction = configured
@@ -689,7 +697,11 @@ class TranslationInputMethodService : InputMethodService() {
         }
         contentDescription = label
         isClickable = true
-        setOnClickListener { action() }
+        setOnClickListener {
+            if (keyVibrationEnabled) performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            if (keySoundEnabled) toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 18)
+            action()
+        }
     }
 
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -720,6 +732,9 @@ class TranslationInputMethodService : InputMethodService() {
             showTranslationPage(false, false)
         }
         val preferences = AppPreferences(applicationContext)
+        keySoundEnabled = preferences.keyboardSoundEnabled
+        keyVibrationEnabled = preferences.keyboardVibrationEnabled
+        if (keySoundEnabled && toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 45)
         if (rowHeight != preferences.keyboardRowHeight || textSize != preferences.keyboardTextSize) {
             rowHeight = preferences.keyboardRowHeight
             textSize = preferences.keyboardTextSize
@@ -729,6 +744,8 @@ class TranslationInputMethodService : InputMethodService() {
     override fun onDestroy() {
         translationMemory.clear()
         characterPopup?.dismiss()
+        toneGenerator?.release()
+        toneGenerator = null
         scope.cancel()
         super.onDestroy()
     }

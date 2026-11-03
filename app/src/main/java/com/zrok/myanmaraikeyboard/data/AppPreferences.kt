@@ -55,6 +55,14 @@ class AppPreferences(context: Context) {
         get() = preferences.getInt(KEY_KEYBOARD_TEXT_SIZE, 20).coerceIn(16, 24)
         set(value) = preferences.edit().putInt(KEY_KEYBOARD_TEXT_SIZE, value.coerceIn(16, 24)).apply()
 
+    var keyboardSoundEnabled: Boolean
+        get() = preferences.getBoolean(KEY_KEYBOARD_SOUND, true)
+        set(value) = preferences.edit().putBoolean(KEY_KEYBOARD_SOUND, value).apply()
+
+    var keyboardVibrationEnabled: Boolean
+        get() = preferences.getBoolean(KEY_KEYBOARD_VIBRATION, true)
+        set(value) = preferences.edit().putBoolean(KEY_KEYBOARD_VIBRATION, value).apply()
+
     val geminiModels: List<String>
         get() = DEFAULT_GEMINI_MODELS
 
@@ -103,6 +111,8 @@ class AppPreferences(context: Context) {
         private const val KEY_NETWORK_ENABLED = "network_enabled"
         private const val KEY_KEYBOARD_ROW_HEIGHT = "keyboard_row_height"
         private const val KEY_KEYBOARD_TEXT_SIZE = "keyboard_text_size"
+        private const val KEY_KEYBOARD_SOUND = "keyboard_sound"
+        private const val KEY_KEYBOARD_VIBRATION = "keyboard_vibration"
         const val MAX_API_KEYS = 4
         const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
         val OPENROUTER_MODELS = listOf(

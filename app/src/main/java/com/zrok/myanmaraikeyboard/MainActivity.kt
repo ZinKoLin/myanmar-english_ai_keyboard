@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
             var networkEnabled by remember { mutableStateOf(preferences.networkTranslationEnabled) }
             var keyboardRowHeight by remember { mutableStateOf(preferences.keyboardRowHeight.toFloat()) }
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
+            var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
+            var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
             var saveMessage by remember { mutableStateOf<String?>(null) }
             MyanmarAiTheme {
                 Column(
@@ -78,6 +80,28 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("Changes apply the next time the keyboard opens.")
+                    HorizontalDivider()
+                    Text("Key feedback / ခလုတ်တုံ့ပြန်မှု")
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Key sound / ခလုတ်အသံ")
+                        Switch(checked = keyboardSoundEnabled, onCheckedChange = {
+                            keyboardSoundEnabled = it
+                            preferences.keyboardSoundEnabled = it
+                        })
+                    }
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Key vibration / တုန်ခါမှု")
+                        Switch(checked = keyboardVibrationEnabled, onCheckedChange = {
+                            keyboardVibrationEnabled = it
+                            preferences.keyboardVibrationEnabled = it
+                        })
+                    }
                     Text("Use your own Gemini API key. It is stored encrypted on this device and is never bundled with the app.")
                     Text("Gemini endpoint is managed automatically for security and compatibility.")
                     Text("Gemini API keys (up to 4, tried in order; stored encrypted)")
