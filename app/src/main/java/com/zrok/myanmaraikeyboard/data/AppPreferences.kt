@@ -67,6 +67,10 @@ class AppPreferences(context: Context) {
         get() = preferences.getInt(KEY_KEYBOARD_ROW_HEIGHT, 50).coerceIn(48, 64)
         set(value) = preferences.edit().putInt(KEY_KEYBOARD_ROW_HEIGHT, value.coerceIn(48, 64)).apply()
 
+    var previewHeight: Int
+        get() = preferences.getInt("preview_height", 210).coerceIn(100, 480)
+        set(value) = preferences.edit().putInt("preview_height", value.coerceIn(100, 480)).apply()
+
     var keyboardTextSize: Int
         get() = preferences.getInt(KEY_KEYBOARD_TEXT_SIZE, 20).coerceIn(16, 24)
         set(value) = preferences.edit().putInt(KEY_KEYBOARD_TEXT_SIZE, value.coerceIn(16, 24)).apply()
