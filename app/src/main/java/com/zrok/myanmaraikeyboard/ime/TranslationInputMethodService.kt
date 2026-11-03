@@ -748,9 +748,36 @@ class TranslationInputMethodService : InputMethodService() {
         bottom.addView(tile(if (myanmar) "၊" else ",", true) { input(if (myanmar) "၊" else ",") }, params(0.8f))
         bottom.addView(tile(if (myanmar) "မြန်မာ" else "English") { input(" ") }, params(2.7f))
         bottom.addView(tile(if (myanmar) "။" else ".", true) { input(if (myanmar) "။" else ".") }, params(0.8f))
-        bottom.addView(tile("↵", true) { input("\n") }, params(1.2f))
+        val editorAction = editorActionInfo()
+        bottom.addView(tile(editorAction.label, true) {
+            if (editorAction.action == EditorInfo.IME_ACTION_NONE || editorAction.action == EditorInfo.IME_ACTION_UNSPECIFIED) {
+                input("\n")
+            } else {
+                val connection = currentInputConnection
+                val completed = connection?.performEditorAction(editorAction.action) == true
+                if (!completed) input("\n")
+            }
+        }.apply {
+            contentDescription = "Editor action ${editorAction.label}"
+        }, params(1.2f))
         keys.addView(bottom)
         widenTypingKeys()
+    }
+
+    private data class EditorActionInfo(val action: Int, val label: String)
+
+    private fun editorActionInfo(): EditorActionInfo {
+        val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
+            ?: EditorInfo.IME_ACTION_NONE
+        return when (action) {
+            EditorInfo.IME_ACTION_GO -> EditorActionInfo(action, "Go")
+            EditorInfo.IME_ACTION_SEARCH -> EditorActionInfo(action, "⌕")
+            EditorInfo.IME_ACTION_SEND -> EditorActionInfo(action, "Send")
+            EditorInfo.IME_ACTION_NEXT -> EditorActionInfo(action, "Next")
+            EditorInfo.IME_ACTION_DONE -> EditorActionInfo(action, "Done")
+            EditorInfo.IME_ACTION_PREVIOUS -> EditorActionInfo(action, "Prev")
+            else -> EditorActionInfo(EditorInfo.IME_ACTION_NONE, "↵")
+        }
     }
 
     private fun addRow(values: List<String>) {
@@ -1170,8 +1197,9 @@ class TranslationInputMethodService : InputMethodService() {
         if (rowHeight != preferences.keyboardRowHeight || textSize != preferences.keyboardTextSize) {
             rowHeight = preferences.keyboardRowHeight
             textSize = preferences.keyboardTextSize
-            renderKeys()
         }
+        // The active text field can expose a different IME action, such as Go or Search.
+        renderKeys()
     }
 
     private fun startClipboardMonitoring() {
