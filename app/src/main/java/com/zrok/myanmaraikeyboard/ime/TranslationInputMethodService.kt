@@ -127,6 +127,11 @@ class TranslationInputMethodService : InputMethodService() {
             toneKey.text = tone.label
         }
         toneKey.contentDescription = "Switch translation tone"
+        if (preferences.azureEnabled) {
+            toneKey.text = "Azure"
+            toneKey.contentDescription = "Azure standard translation; tone selection unavailable"
+            toneKey.isEnabled = false
+        }
         toolbar.addView(tile("Clear", true) {
             if (translating) {
                 request?.cancel()

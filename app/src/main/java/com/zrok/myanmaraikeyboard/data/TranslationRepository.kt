@@ -11,6 +11,8 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import org.json.JSONArray
 
 class TranslationRepository(private val preferences: AppPreferences) {
     suspend fun translate(
@@ -22,6 +24,18 @@ class TranslationRepository(private val preferences: AppPreferences) {
             return@withContext Result.failure(TranslationException("Network translation is disabled in Privacy settings."))
         }
         if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
+        if (preferences.azureEnabled) {
+            if (preferences.azureApiKey.isBlank()) return@withContext Result.failure(TranslationException(
+                "Azure Translator key ထည့်ရန် Settings → Azure Translator ကိုဖွင့်ပါ။ F0 Free resource ဖန်တီးပြီး Key / Region ကို Save လုပ်ပါ။"
+            ))
+            return@withContext runCatching {
+                currentCoroutineContext().ensureActive()
+                translateWithAzure(text, direction)
+            }.fold(onSuccess = { Result.success(it) }, onFailure = {
+                if (it is CancellationException) throw it
+                Result.failure(TranslationException(it.message ?: "Azure translation failed."))
+            })
+        }
         val apiKeys = if (preferences.geminiEnabled) preferences.apiKeys else emptyList()
         val openRouterKey = preferences.openRouterApiKey.trim()
         if (apiKeys.isEmpty() && openRouterKey.isBlank()) return@withContext Result.failure(TranslationException(
@@ -159,11 +173,43 @@ class TranslationRepository(private val preferences: AppPreferences) {
         val error = runCatching { JSONObject(body).optJSONObject("error") }.getOrNull()
         var message = error?.optString("message").orEmpty()
         if (message.isBlank()) message = "No error details from provider"
-        (preferences.apiKeys + preferences.openRouterApiKey).filter { it.isNotBlank() }.forEach {
+        (preferences.apiKeys + preferences.openRouterApiKey + preferences.azureApiKey).filter { it.isNotBlank() }.forEach {
             message = message.replace(it, "[hidden]")
         }
         return message.replace(Regex("AIza[\\w-]+|sk-or-[\\w-]+"), "[hidden]")
             .replace(Regex("\\s+"), " ").take(240)
+    }
+
+    private fun translateWithAzure(text: String, direction: TranslationDirection): String {
+        fun code(language: String) = URLEncoder.encode(when (language) {
+            "he" -> "he"
+            "no" -> "nb"
+            else -> language
+        }, "UTF-8")
+        val url = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0" +
+            "&from=${code(direction.source.code)}&to=${code(direction.target.code)}"
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 10_000
+            readTimeout = 20_000
+            instanceFollowRedirects = false
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Ocp-Apim-Subscription-Key", preferences.azureApiKey)
+            val region = preferences.azureRegion
+            if (region.isNotBlank() && region != "global") setRequestProperty("Ocp-Apim-Subscription-Region", region)
+        }
+        try {
+            val request = JSONArray().put(JSONObject().put("Text", text))
+            connection.outputStream.use { it.write(request.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) throw IOException("Azure HTTP $status — ${safeError(body)}")
+            return JSONArray(body).optJSONObject(0)?.optJSONArray("translations")
+                ?.optJSONObject(0)?.optString("text").orEmpty()
+                .ifBlank { throw IOException("Azure returned no translation text.") }
+        } finally { connection.disconnect() }
     }
 
     class TranslationException(message: String) : Exception(message)

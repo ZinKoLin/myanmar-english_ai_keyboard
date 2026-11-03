@@ -51,6 +51,18 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean("gemini_enabled", false)
         set(value) = preferences.edit().putBoolean("gemini_enabled", value).apply()
 
+    var azureEnabled: Boolean
+        get() = preferences.getBoolean("azure_enabled", true)
+        set(value) = preferences.edit().putBoolean("azure_enabled", value).apply()
+
+    var azureApiKey: String
+        get() = preferences.getString("azure_api_key", "").orEmpty()
+        set(value) = preferences.edit().putString("azure_api_key", value.trim()).apply()
+
+    var azureRegion: String
+        get() = preferences.getString("azure_region", "global").orEmpty()
+        set(value) = preferences.edit().putString("azure_region", value.trim().lowercase(java.util.Locale.ROOT)).apply()
+
     var keyboardRowHeight: Int
         get() = preferences.getInt(KEY_KEYBOARD_ROW_HEIGHT, 50).coerceIn(48, 64)
         set(value) = preferences.edit().putInt(KEY_KEYBOARD_ROW_HEIGHT, value.coerceIn(48, 64)).apply()

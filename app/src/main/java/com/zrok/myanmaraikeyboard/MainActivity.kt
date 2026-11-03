@@ -55,6 +55,11 @@ class MainActivity : ComponentActivity() {
             var openRouterApiKey by remember { mutableStateOf(preferences.openRouterApiKey) }
             var networkEnabled by remember { mutableStateOf(preferences.networkTranslationEnabled) }
             var geminiEnabled by remember { mutableStateOf(preferences.geminiEnabled) }
+            var azureEnabled by remember { mutableStateOf(preferences.azureEnabled) }
+            var azureKey by remember { mutableStateOf(preferences.azureApiKey) }
+            var azureRegion by remember { mutableStateOf(preferences.azureRegion) }
+            var azureMessage by remember { mutableStateOf<String?>(null) }
+            var showAzureKey by remember { mutableStateOf(false) }
             var keyboardRowHeight by remember { mutableStateOf(preferences.keyboardRowHeight.toFloat()) }
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
@@ -164,7 +169,50 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     }
+                    SettingsCard("Azure Translator") {
+                        androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Azure အသုံးပြုရန်", modifier = Modifier.weight(1f))
+                            Switch(checked = azureEnabled, onCheckedChange = {
+                                azureEnabled = it
+                                preferences.azureEnabled = it
+                                connectionResult = null
+                            })
+                        }
+                        Text("မြန်မာ ↔ English • F0 Free tier: တစ်လ စာလုံးရေ ၂ သန်းအထိ။", style = MaterialTheme.typography.bodySmall)
+                        Text("Azure mode တွင် ပုံမှန်ဘာသာပြန်သာ သုံးသည်။ Natural / Formal / Casual tone မသက်ရောက်ပါ။", style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { showAzureKey = !showAzureKey }) { Text("Azure Key / Region ပြင်ရန် ${if (showAzureKey) "▴" else "▾"}") }
+                        if (showAzureKey) {
+                            OutlinedTextField(azureKey, { azureKey = it }, Modifier.fillMaxWidth(),
+                                label = { Text("Azure Translator key") }, singleLine = true,
+                                visualTransformation = PasswordVisualTransformation())
+                            OutlinedTextField(azureRegion, { azureRegion = it }, Modifier.fillMaxWidth(),
+                                label = { Text("Region (ဥပမာ southeastasia / global)") }, singleLine = true)
+                            Text("Azure portal → Translator → Keys and Endpoint မှ ကူးထည့်ပါ။", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = {
+                                preferences.azureApiKey = azureKey
+                                preferences.azureRegion = azureRegion
+                                azureMessage = if (azureKey.isBlank()) "Azure key ထည့်ပါ။" else "Azure connection saved."
+                            }) { Text("Save Azure connection") }
+                            azureMessage?.let { Text(it) }
+                        }
+                        TextButton(onClick = {
+                            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation")))
+                        }) { Text("Azure Translator ဖန်တီးရန် (F0 ရွေးပါ)") }
+                        Button(enabled = !testingConnection && azureEnabled, onClick = {
+                            testingConnection = true
+                            connectionResult = "Testing Azure…"
+                            connectionScope.launch {
+                                try {
+                                    connectionResult = TranslationRepository(preferences).translate("Hello", Tone.NATURAL,
+                                        com.zrok.myanmaraikeyboard.model.TranslationDirection.ENGLISH_TO_MYANMAR).fold(
+                                        onSuccess = { "Azure OK: $it" }, onFailure = { it.message ?: "Azure failed" })
+                                } finally { testingConnection = false }
+                            }
+                        }) { Text(if (testingConnection) "Testing…" else "Test Azure connection") }
+                        if (azureEnabled) connectionResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
                     SettingsCard("AI connection") {
+                    Text(if (azureEnabled) "Azure mode သုံးနေသည်။ Gemini / OpenRouter ပြန်သုံးရန် Azure ကို Off လုပ်ပါ။" else "Gemini / OpenRouter mode", style = MaterialTheme.typography.bodySmall)
                     androidx.compose.foundation.layout.Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -178,7 +226,7 @@ class MainActivity : ComponentActivity() {
                             preferences.geminiEnabled = it
                         })
                     }
-                    Button(enabled = !testingConnection, onClick = {
+                    Button(enabled = !testingConnection && !azureEnabled, onClick = {
                         testingConnection = true
                         connectionResult = "Testing…"
                         connectionScope.launch {
