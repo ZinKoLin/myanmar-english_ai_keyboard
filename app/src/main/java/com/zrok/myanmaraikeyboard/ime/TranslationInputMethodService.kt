@@ -5,6 +5,9 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Vibrator
+import android.os.VibrationEffect
+import android.media.AudioAttributes
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.inputmethodservice.InputMethodService
@@ -97,7 +100,7 @@ class TranslationInputMethodService : InputMethodService() {
         textSize = preferences.keyboardTextSize
         keySoundEnabled = preferences.keyboardSoundEnabled
         keyVibrationEnabled = preferences.keyboardVibrationEnabled
-        if (keySoundEnabled && toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 45)
+        initializeKeySound()
         val configured = AppPreferences(applicationContext).translationDirection
         if (configuredDirection == null) {
             direction = configured
@@ -116,6 +119,7 @@ class TranslationInputMethodService : InputMethodService() {
         toolbar.addView(translateToggle, params(2f, 44))
         val toneKey = tile(tone.label, true) {}
         toneKey.setOnClickListener {
+            playKeyFeedback()
             tone = Tone.entries[(tone.ordinal + 1) % Tone.entries.size]
             toneKey.text = tone.label
         }
@@ -148,6 +152,7 @@ class TranslationInputMethodService : InputMethodService() {
         directionKey = tile(direction.label, true) {}
         directionKey.contentDescription = "Switch translation direction"
         directionKey.setOnClickListener {
+            playKeyFeedback()
             request?.cancel()
             translationGeneration++
             rememberReviewedPair()
@@ -712,9 +717,32 @@ class TranslationInputMethodService : InputMethodService() {
         contentDescription = label
         isClickable = true
         setOnClickListener {
-            if (keyVibrationEnabled) performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-            if (keySoundEnabled) toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 18)
+            playKeyFeedback()
             action()
+        }
+    }
+
+    private fun initializeKeySound() {
+        if (keySoundEnabled && toneGenerator == null) {
+            toneGenerator = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 35) }.getOrNull()
+        }
+    }
+
+    private fun playKeyFeedback() {
+        if (keyVibrationEnabled) {
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator?.hasVibrator() == true) {
+                val effect = VibrationEffect.createOneShot(18, VibrationEffect.DEFAULT_AMPLITUDE)
+                val attributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                vibrator.vibrate(effect, attributes)
+            }
+        }
+        val audio = getSystemService(AUDIO_SERVICE) as? AudioManager
+        if (keySoundEnabled && audio?.ringerMode == AudioManager.RINGER_MODE_NORMAL) {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 35)
         }
     }
 
@@ -758,7 +786,7 @@ class TranslationInputMethodService : InputMethodService() {
         val preferences = AppPreferences(applicationContext)
         keySoundEnabled = preferences.keyboardSoundEnabled
         keyVibrationEnabled = preferences.keyboardVibrationEnabled
-        if (keySoundEnabled && toneGenerator == null) toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 45)
+        initializeKeySound()
         if (rowHeight != preferences.keyboardRowHeight || textSize != preferences.keyboardTextSize) {
             rowHeight = preferences.keyboardRowHeight
             textSize = preferences.keyboardTextSize
