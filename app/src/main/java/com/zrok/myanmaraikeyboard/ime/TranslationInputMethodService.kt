@@ -39,7 +39,9 @@ import com.zrok.myanmaraikeyboard.data.TranslationRepository
 import com.zrok.myanmaraikeyboard.model.Tone
 import com.zrok.myanmaraikeyboard.model.TranslationDirection
 import com.zrok.myanmaraikeyboard.model.TranslationMemory
+import com.zrok.myanmaraikeyboard.model.TranslationRefresh
 import com.zrok.myanmaraikeyboard.model.WordSuggestions
+import com.zrok.myanmaraikeyboard.model.translationRefresh
 import kotlinx.coroutines.*
 
 class TranslationInputMethodService : InputMethodService() {
@@ -58,7 +60,10 @@ class TranslationInputMethodService : InputMethodService() {
     private var translationGeneration = 0L
     private val translationMemory = TranslationMemory()
     private var displayedPair: TranslationMemory.Key? = null
+    private var followSourceEdits = false
+    private var suppressSourceWatch = 0
     private var request: Job? = null
+    private var retranslate: Job? = null
     private var deleteRepeat: Job? = null
     private lateinit var root: LinearLayout
     private lateinit var keys: LinearLayout
@@ -91,13 +96,17 @@ class TranslationInputMethodService : InputMethodService() {
         if (::root.isInitialized) root.post {
             if (!clipboardListenerRegistered || !AppPreferences(applicationContext).autoImportCopiedText || !::source.isInitialized) return@post
             request?.cancel()
+            cancelPendingRefresh()
             translationGeneration++
             rememberReviewedPair()
             displayedPair = null
+            followSourceEdits = false
             translating = true
-            source.setText(copiedText)
-            source.setSelection(source.text.length)
-            preview.text.clear()
+            withoutSourceWatch {
+                source.setText(copiedText)
+                source.setSelection(source.text.length)
+                preview.text.clear()
+            }
             status.text = "Copied text added • Tap Translate when ready"
             panel.visibility = View.VISIBLE
             showTranslationPage(false, false)
@@ -168,9 +177,8 @@ class TranslationInputMethodService : InputMethodService() {
             else keys.visibility = View.VISIBLE
         }
         toolbar.addView(translateToggle, params(2f, 44))
-        toneKey = tile(tone.label, true) {}
-        toneKey.setOnClickListener {
-            playKeyFeedback()
+        toneKey = tile(tone.label, true) {
+            if (!toneKey.isEnabled) return@tile
             tone = Tone.entries[(tone.ordinal + 1) % Tone.entries.size]
             toneKey.text = tone.label
         }
@@ -180,25 +188,7 @@ class TranslationInputMethodService : InputMethodService() {
             toneKey.contentDescription = "Azure standard translation; tone selection unavailable"
             toneKey.isEnabled = false
         }
-        toolbar.addView(tile("Clear", true) {
-            if (translating) {
-                request?.cancel()
-                displayedPair = null
-                source.text.clear()
-                preview.text.clear()
-                status.text = ""
-                showTranslationPage(false, false)
-            } else {
-                val before = readExternalSnapshot()
-                if (before != null) {
-                    val ic = currentInputConnection
-                    ic?.performContextMenuAction(android.R.id.selectAll)
-                    ic?.commitText("", 1)
-                    val after = readExternalSnapshot()
-                    if (ic != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
-                }
-            }
-        }, params(1f, 44))
+        toolbar.addView(tile("Clear", true) { clearTypedText() }, params(1f, 44))
         toolbar.addView(tile("Undo", true) { undoLast() }, params(1f, 44))
         toolbar.addView(tile("⚙", true) {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -210,6 +200,7 @@ class TranslationInputMethodService : InputMethodService() {
         directionKey.setOnClickListener {
             playKeyFeedback()
             request?.cancel()
+            cancelPendingRefresh()
             translationGeneration++
             rememberReviewedPair()
             val validPair = displayedPair?.let {
@@ -219,8 +210,10 @@ class TranslationInputMethodService : InputMethodService() {
             directionKey.text = direction.label
             val previousSource = source.text.toString()
             val previousPreview = preview.text.toString()
-            source.setText(previousPreview)
-            preview.setText(previousSource)
+            withoutSourceWatch {
+                source.setText(previousPreview)
+                preview.setText(previousSource)
+            }
             displayedPair = if (validPair && previousPreview.isNotBlank())
                 TranslationMemory.Key(previousPreview, tone, direction) else null
             source.hint = direction.sourceHint
@@ -231,6 +224,7 @@ class TranslationInputMethodService : InputMethodService() {
         val translationHeader = LinearLayout(this)
         translationHeader.addView(directionKey, params(1.6f, 44))
         translationHeader.addView(toneKey, params(1f, 44))
+        translationHeader.addView(tile("Grammar", true) { runGrammarCheck() }, params(1f, 44))
         panel.addView(translationHeader)
         source = editor(direction.sourceHint)
         preview = editor(direction.previewHint)
@@ -246,7 +240,12 @@ class TranslationInputMethodService : InputMethodService() {
         }
         val tabs = LinearLayout(this)
         sourceTab = tile(direction.sourceLabel, true) { showTranslationPage(false, false) }
-        previewTab = tile(direction.targetLabel, true) { showTranslationPage(true, true) }
+        previewTab = tile(direction.targetLabel, true) {
+            if (translationRefresh(followSourceEdits, source.text.toString(), displayedPair, tone, direction) == TranslationRefresh.Update) {
+                root.removeCallbacks(applySourceChange)
+                requestTranslation(switchToPreview = true)
+            } else showTranslationPage(true, true)
+        }
         tabs.addView(sourceTab, params(1f, 44))
         tabs.addView(previewTab, params(1f, 44))
         tabs.addView(tile("⛶", true) { showFullPreview() }.apply {
@@ -257,37 +256,7 @@ class TranslationInputMethodService : InputMethodService() {
         panel.addView(preview, LinearLayout.LayoutParams(-1, dp(90)))
         val actions = LinearLayout(this)
         actions.addView(tile("Translate →", true) {
-            if (source.text.isBlank()) { status.text = "Type text first"; return@tile }
-            request?.cancel()
-            val input = source.text.toString()
-            val selectedTone = tone
-            val selectedDirection = direction
-            val generation = ++translationGeneration
-            rememberReviewedPair()
-            val memoryKey = TranslationMemory.Key(input, selectedTone, selectedDirection)
-            translationMemory.find(memoryKey)?.let { existing ->
-                preview.setText(existing)
-                displayedPair = memoryKey
-                status.text = "Using your existing translation"
-                showTranslationPage(true, true)
-                return@tile
-            }
-            status.text = "Translating…"
-            request = scope.launch {
-                TranslationRepository(AppPreferences(applicationContext)).translate(input, selectedTone, selectedDirection).fold(
-                    onSuccess = {
-                        if (generation != translationGeneration) return@launch
-                        if (source.text.toString() == input) {
-                            translationMemory.remember(memoryKey, it)
-                            displayedPair = memoryKey
-                            preview.setText(it)
-                            status.text = "Tap the translation to edit • Insert when ready"
-                            if (translating) showTranslationPage(true, true)
-                        } else status.text = "Source changed. Tap Translate again."
-                    },
-                    onFailure = { if (generation == translationGeneration) status.text = it.message }
-                )
-            }
+            requestTranslation(switchToPreview = true)
         }.apply { primaryStyle(this) }, params(1.35f, 48))
         actions.addView(tile("Edit", true) {
             if (preview.text.isNotBlank()) {
@@ -295,61 +264,28 @@ class TranslationInputMethodService : InputMethodService() {
                 status.text = "Edit the translation, then tap Insert"
             }
         }, params(0.85f, 48))
-        insertButton = tile("Insert ↗", true) {
-            if (preview.text.isNotEmpty()) {
-                val before = readExternalSnapshot()
-                val inserted = currentInputConnection?.commitText(preview.text.toString(), 1) == true
-                val after = readExternalSnapshot()
-                if (before != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
-                if (inserted) {
-                    clearTranslationDraft("Inserted into your text field")
-                } else status.text = "Tap a text field and try again"
-            }
-        }
-        insertButton.isEnabled = preview.text.isNotBlank()
-        insertButton.alpha = if (insertButton.isEnabled) 1f else 0.45f
+        insertButton = tile("Insert ↗", true) { commitTranslation(send = false) }
+        insertButton.contentDescription = "Insert translation"
+        val sendButton = tile("➤", true) { commitTranslation(send = true) }
+        sendButton.contentDescription = "Send translation"
+        primaryStyle(sendButton)
+        val canSend = preview.text.isNotBlank()
+        insertButton.isEnabled = canSend
+        sendButton.isEnabled = canSend
+        insertButton.alpha = if (canSend) 1f else 0.45f
+        sendButton.alpha = if (canSend) 1f else 0.45f
         preview.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                insertButton.isEnabled = !s.isNullOrBlank()
-                insertButton.alpha = if (insertButton.isEnabled) 1f else 0.45f
+                val ready = !s.isNullOrBlank()
+                insertButton.isEnabled = ready
+                sendButton.isEnabled = ready
+                insertButton.alpha = if (ready) 1f else 0.45f
+                sendButton.alpha = if (ready) 1f else 0.45f
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
         actions.addView(insertButton, params(1f, 48))
-        val sendButton = tile("➤", true) {
-            val translated = preview.text.toString()
-            if (translated.isNotBlank()) {
-                val before = readExternalSnapshot()
-                val ic = currentInputConnection
-                val inserted = ic?.commitText(translated, 1) == true
-                val after = readExternalSnapshot()
-                if (before != null && after != null) {
-                    externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
-                }
-                if (inserted) {
-                    val configuredAction = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
-                    val action = configuredAction.takeIf { it != EditorInfo.IME_ACTION_NONE && it != EditorInfo.IME_ACTION_UNSPECIFIED }
-                        ?: EditorInfo.IME_ACTION_SEND
-                    val sent = ic?.performEditorAction(action) == true
-                    if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-                    if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-                    clearTranslationDraft("Inserted and sent")
-                } else status.text = "Tap a text field and try again"
-            }
-        }
-        sendButton.contentDescription = "Send translation"
-        primaryStyle(sendButton)
-        sendButton.isEnabled = preview.text.isNotBlank()
-        sendButton.alpha = if (sendButton.isEnabled) 1f else 0.45f
-        preview.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                sendButton.isEnabled = !s.isNullOrBlank()
-                sendButton.alpha = if (sendButton.isEnabled) 1f else 0.45f
-            }
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
         actions.addView(sendButton, params(0.8f, 48))
         panel.addView(actions)
         panel.addView(status)
@@ -364,13 +300,21 @@ class TranslationInputMethodService : InputMethodService() {
         root.addView(keys)
         renderKeys()
         showTranslationPage(false, false)
-        listOf(source, preview).forEach { editor ->
-            editor.addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshSuggestions() }
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-        }
+        source.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {
+                if (suppressSourceWatch == 0) rememberReviewedPair()
+            }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                refreshSuggestions()
+                onSourceDiverged()
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        preview.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { refreshSuggestions() }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
         suggestionsEnabled = preferences.suggestionsEnabled
         refreshSuggestions()
         return root
@@ -383,14 +327,210 @@ class TranslationInputMethodService : InputMethodService() {
         }
     }
 
-    private fun clearTranslationDraft(message: String) {
+    private fun withoutSourceWatch(block: () -> Unit) {
+        suppressSourceWatch++
+        try {
+            block()
+        } finally {
+            suppressSourceWatch--
+        }
+    }
+
+    private fun cancelPendingRefresh() {
+        retranslate?.cancel()
+        if (::root.isInitialized) root.removeCallbacks(applySourceChange)
+    }
+
+    private val applySourceChange = Runnable {
+        if (suppressSourceWatch > 0 || !::source.isInitialized) return@Runnable
+        when (translationRefresh(followSourceEdits, source.text.toString(), displayedPair, tone, direction)) {
+            TranslationRefresh.Keep -> Unit
+            TranslationRefresh.Clear -> {
+                cancelPendingRefresh()
+                request?.cancel()
+                translationGeneration++
+                followSourceEdits = false
+                displayedPair = null
+                preview.text.clear()
+                status.text = ""
+            }
+            TranslationRefresh.Update -> scheduleSourceRefresh()
+        }
+    }
+
+    private fun onSourceDiverged() {
+        if (suppressSourceWatch > 0 || !::root.isInitialized) return
+        val decision = translationRefresh(followSourceEdits, source.text.toString(), displayedPair, tone, direction)
+        root.removeCallbacks(applySourceChange)
+        if (decision == TranslationRefresh.Keep) {
+            if (displayedPair?.text == source.text.toString()) cancelPendingRefresh()
+            return
+        }
+        root.post(applySourceChange)
+    }
+
+    private fun scheduleSourceRefresh() {
+        val current = source.text.toString()
+        val key = TranslationMemory.Key(current, tone, direction)
+        cancelPendingRefresh()
         request?.cancel()
         translationGeneration++
+        translationMemory.find(key)?.let { existing ->
+            preview.setText(existing)
+            displayedPair = key
+            status.text = "Using your existing translation"
+            return
+        }
         displayedPair = null
-        source.text.clear()
         preview.text.clear()
+        status.text = "Source changed • updating translation"
+        val scheduled = translationGeneration
+        retranslate = scope.launch {
+            delay(500)
+            if (scheduled != translationGeneration || source.text.toString() != current) return@launch
+            retranslate = null
+            requestTranslation(switchToPreview = false)
+        }
+    }
+
+    private fun requestTranslation(switchToPreview: Boolean) {
+        cancelPendingRefresh()
+        if (source.text.isBlank()) {
+            status.text = "Type text first"
+            return
+        }
+        request?.cancel()
+        val input = source.text.toString()
+        val selectedTone = tone
+        val selectedDirection = direction
+        val generation = ++translationGeneration
+        rememberReviewedPair()
+        followSourceEdits = true
+        val memoryKey = TranslationMemory.Key(input, selectedTone, selectedDirection)
+        if (displayedPair != memoryKey) {
+            displayedPair = null
+            preview.text.clear()
+        }
+        translationMemory.find(memoryKey)?.let { existing ->
+            preview.setText(existing)
+            displayedPair = memoryKey
+            status.text = "Using your existing translation"
+            if (switchToPreview) showTranslationPage(true, true)
+            return
+        }
+        status.text = "Translating…"
+        request = scope.launch {
+            TranslationRepository(AppPreferences(applicationContext)).translate(input, selectedTone, selectedDirection).fold(
+                onSuccess = {
+                    if (generation != translationGeneration) return@launch
+                    val unchanged = source.text.toString() == input && direction == selectedDirection && tone == selectedTone
+                    if (unchanged) {
+                        translationMemory.remember(memoryKey, it)
+                        displayedPair = memoryKey
+                        preview.setText(it)
+                        status.text = if (switchToPreview) {
+                            "Tap the translation to edit • Insert when ready"
+                        } else {
+                            "Translation updated"
+                        }
+                        if (switchToPreview && translating) showTranslationPage(true, true)
+                    } else if (followSourceEdits && source.text.isNotBlank()) {
+                        scheduleSourceRefresh()
+                    }
+                },
+                onFailure = { if (generation == translationGeneration) status.text = it.message }
+            )
+        }
+    }
+
+    private fun clearTranslationDraft(message: String) {
+        request?.cancel()
+        cancelPendingRefresh()
+        translationGeneration++
+        followSourceEdits = false
+        displayedPair = null
+        withoutSourceWatch {
+            source.text.clear()
+            preview.text.clear()
+        }
         status.text = message
         showTranslationPage(false, false)
+    }
+
+    private fun clearTypedText() {
+        if (translating) {
+            request?.cancel()
+            cancelPendingRefresh()
+            translationGeneration++
+            followSourceEdits = false
+            displayedPair = null
+            withoutSourceWatch {
+                source.text.clear()
+                preview.text.clear()
+            }
+            status.text = ""
+            showTranslationPage(false, false)
+        } else {
+            val before = readExternalSnapshot()
+            if (before != null) {
+                val ic = currentInputConnection
+                ic?.performContextMenuAction(android.R.id.selectAll)
+                ic?.commitText("", 1)
+                val after = readExternalSnapshot()
+                if (ic != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
+            }
+        }
+    }
+
+    private fun runGrammarCheck() {
+        val input = source.text.toString()
+        if (input.isBlank()) { status.text = "Type text first"; return }
+        request?.cancel()
+        cancelPendingRefresh()
+        val generation = ++translationGeneration
+        displayedPair = null
+        status.text = "Checking grammar…"
+        request = scope.launch {
+            TranslationRepository(AppPreferences(applicationContext))
+                .checkGrammar(input, direction.sourceLanguage)
+                .fold(
+                    onSuccess = { corrected ->
+                        if (generation != translationGeneration) return@launch
+                        if (source.text.toString() == input) {
+                            preview.setText(corrected)
+                            status.text = "Grammar checked • Review, edit, then Insert"
+                            showTranslationPage(true, true)
+                        } else status.text = "Source changed. Tap Grammar again."
+                    },
+                    onFailure = { if (generation == translationGeneration) status.text = it.message }
+                )
+        }
+    }
+
+    private fun commitTranslation(send: Boolean) {
+        val translated = preview.text.toString()
+        if (translated.isBlank()) {
+            status.text = "Translate first"
+            return
+        }
+        val before = readExternalSnapshot()
+        val ic = currentInputConnection
+        val inserted = ic?.commitText(translated, 1) == true
+        val after = readExternalSnapshot()
+        if (before != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
+        if (!inserted) {
+            status.text = "Tap a text field and try again"
+            return
+        }
+        if (send) {
+            val configuredAction = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
+            val action = configuredAction.takeIf { it != EditorInfo.IME_ACTION_NONE && it != EditorInfo.IME_ACTION_UNSPECIFIED }
+                ?: EditorInfo.IME_ACTION_SEND
+            val sent = ic?.performEditorAction(action) == true
+            if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            if (!sent) ic?.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            clearTranslationDraft("Inserted and sent")
+        } else clearTranslationDraft("Inserted into your text field")
     }
 
     private fun showTranslationPage(english: Boolean, expanded: Boolean, preserveCursor: Boolean = false) {
@@ -566,15 +706,15 @@ class TranslationInputMethodService : InputMethodService() {
             shifted -> listOf("Q W E R T Y U I O P", "A S D F G H J K L", "Z X C V B N M")
             else -> listOf("q w e r t y u i o p", "a s d f g h j k l", "z x c v b n m")
         }
-        // Captured from the user's installed Gboard Burmese layout, 2026-11-03.
         if (myanmar && !symbols) {
             val extras = if (shifted) "၁ ၂ ၃ ၄ ၅ ၆ ၇ ၈ ၉ ၀" else "ဈ ဝ ဋ ုံ ော ဪ ရ ဂ ဟ ၏"
-            addRow(extras.split(" "), false)
+            addRow(extras.split(" "))
         }
         rows.forEachIndexed { index, row ->
             val line = LinearLayout(this)
             if (index == 2) line.addView(tile(if (shifted) "⇧" else "↑", true) {
-                shifted = !shifted; renderKeys()
+                shifted = !shifted
+                renderKeys()
             }, params(1.2f))
             row.split(" ").forEach { value ->
                 val key = tile(value) { input(value) }
@@ -613,9 +753,19 @@ class TranslationInputMethodService : InputMethodService() {
         widenTypingKeys()
     }
 
+    private fun addRow(values: List<String>) {
+        val line = LinearLayout(this)
+        values.forEach { value ->
+            val key = tile(value) { input(value) }
+            alternatives[value]?.let { choices ->
+                key.setOnLongClickListener { showAlternatives(key, choices); true }
+            }
+            line.addView(key, params())
+        }
+        keys.addView(line)
+    }
+
     private fun widenTypingKeys() {
-        // Each key owns the whole cell, including the small visual gap around it.
-        // Android's normal touch/long-press handling remains in charge of selection.
         for (rowIndex in 0 until keys.childCount) {
             val row = keys.getChildAt(rowIndex) as? LinearLayout ?: continue
             row.isMotionEventSplittingEnabled = true
@@ -636,18 +786,6 @@ class TranslationInputMethodService : InputMethodService() {
                 }
             }
         }
-    }
-
-    private fun addRow(values: List<String>, special: Boolean) {
-        val line = LinearLayout(this)
-        values.forEach { value ->
-            val key = tile(value, special) { input(value) }
-            alternatives[value]?.let { choices ->
-                key.setOnLongClickListener { showAlternatives(key, choices); true }
-            }
-            line.addView(key, params())
-        }
-        keys.addView(line)
     }
 
     private fun showAlternatives(anchor: View, values: List<String>) {
@@ -1001,6 +1139,7 @@ class TranslationInputMethodService : InputMethodService() {
         val configured = AppPreferences(applicationContext).translationDirection
         if (configured != configuredDirection) {
             request?.cancel()
+            cancelPendingRefresh()
             translationGeneration++
             rememberReviewedPair()
             pairDrafts[direction] = source.text.toString() to preview.text.toString()
@@ -1008,9 +1147,12 @@ class TranslationInputMethodService : InputMethodService() {
             configuredDirection = configured
             directionKey.text = direction.label
             val draft = pairDrafts[direction]
-            source.setText(draft?.first.orEmpty())
-            preview.setText(draft?.second.orEmpty())
+            followSourceEdits = false
             displayedPair = null
+            withoutSourceWatch {
+                source.setText(draft?.first.orEmpty())
+                preview.setText(draft?.second.orEmpty())
+            }
             source.hint = direction.sourceHint
             preview.hint = direction.previewHint
             status.text = "Translation languages updated"

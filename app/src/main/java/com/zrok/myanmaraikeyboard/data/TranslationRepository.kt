@@ -44,19 +44,73 @@ class TranslationRepository(private val preferences: AppPreferences) {
             else "Add a Gemini or OpenRouter API key in the companion app."
         ))
 
+        val prompt = "Translate the following ${direction.sourceLanguage} text into ${direction.targetLanguage}. " +
+            "Use a ${tone.promptValue} tone. Preserve the meaning and return only the translation, with no explanation.\n\n$text"
+        val attempts = mutableListOf<String>()
         runCatching {
-            val prompt = "Translate the following ${direction.sourceLanguage} text into ${direction.targetLanguage}. " +
-                "Use a ${tone.promptValue} tone. Preserve the meaning and return only the translation, with no explanation.\n\n$text"
-            val request = JSONObject().put(
-                "contents", org.json.JSONArray().put(
-                    JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", prompt)))
-                )
+            val geminiResult = if (apiKeys.isNotEmpty()) {
+                runCatching { requestGemini(prompt, apiKeys, attempts, "Gemini translation") }
+            } else null
+            if (geminiResult?.isSuccess == true) return@runCatching geminiResult.getOrThrow()
+            val geminiError = geminiResult?.exceptionOrNull()
+            if (openRouterKey.isBlank()) throw (geminiError ?: IOException("No translation provider is configured."))
+            if (openRouterKey.isNotBlank()) {
+                var lastOpenRouterError: IOException? = null
+                for (model in AppPreferences.OPENROUTER_MODELS) {
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        return@runCatching translateWithOpenRouter(prompt, openRouterKey, model)
+                    } catch (error: IOException) {
+                        attempts.add(error.message.orEmpty())
+                        lastOpenRouterError = error
+                    }
+                }
+                throw IOException("Translation fallback exhausted. " + attempts.distinct().joinToString("; "), lastOpenRouterError)
+            }
+            throw IOException("Gemini translation failed.", geminiError)
+        }.fold(
+            onSuccess = { Result.success(it) },
+            onFailure = {
+                if (it is CancellationException) throw it
+                Result.failure(TranslationException(it.message ?: "Translation failed."))
+            }
+        )
+    }
+
+    suspend fun checkGrammar(text: String, language: String): Result<String> = withContext(Dispatchers.IO) {
+        if (!preferences.networkTranslationEnabled) {
+            return@withContext Result.failure(TranslationException("Network translation is disabled in Privacy settings."))
+        }
+        if (text.isBlank()) return@withContext Result.failure(TranslationException("Type text first."))
+        val apiKeys = preferences.apiKeys
+        if (apiKeys.isEmpty()) return@withContext Result.failure(TranslationException(
+            "Grammar check needs a Gemini API key. Add one in Settings → Gemini."
+        ))
+        val prompt = "Proofread the following text written in $language. Correct spelling, grammar, and punctuation while preserving the original meaning, language, and tone. Do not translate it, explain changes, or add new information. Return only the corrected text. If it is already correct, return it unchanged.\n\n$text"
+        runCatching { requestGemini(prompt, apiKeys, mutableListOf(), "Grammar check") }
+            .fold(
+                onSuccess = { Result.success(it) },
+                onFailure = {
+                    if (it is CancellationException) throw it
+                    Result.failure(TranslationException(it.message ?: "Grammar check failed."))
+                }
             )
-            var lastErrorCode = 0
-            val attempts = mutableListOf<String>()
-            for (model in preferences.geminiModels) {
-                var moveToNextModel = false
-                for ((index, key) in apiKeys.withIndex()) {
+    }
+
+    private suspend fun requestGemini(
+        prompt: String,
+        apiKeys: List<String>,
+        attempts: MutableList<String>,
+        taskName: String
+    ): String {
+        val request = JSONObject().put(
+            "contents", org.json.JSONArray().put(
+                JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", prompt)))
+            )
+        )
+        for (model in preferences.geminiModels) {
+            var moveToNextModel = false
+            for ((index, key) in apiKeys.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 val connection = (URL(preferences.endpointForModel(model)).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
@@ -73,68 +127,44 @@ class TranslationRepository(private val preferences: AppPreferences) {
                         ?.bufferedReader()?.use { it.readText() }.orEmpty()
                     if (code !in 200..299) attempts.add("$model: HTTP $code — ${safeError(body)}")
                     if (code == 400) {
-                        lastErrorCode = code
-                        // Invalid credentials can be reported as 400 by Gemini.
-                        val invalidKey = body.contains("API_KEY_INVALID", ignoreCase = true) ||
-                            body.contains("API key not valid", ignoreCase = true)
-                        if (invalidKey && index < apiKeys.lastIndex) continue
+                        val keySpecific400 = body.contains("API_KEY_INVALID", ignoreCase = true) ||
+                            body.contains("API key not valid", ignoreCase = true) ||
+                            (body.contains("location", ignoreCase = true) && body.contains("not supported", ignoreCase = true))
+                        if (keySpecific400 && index < apiKeys.lastIndex) continue
                         moveToNextModel = true
                         break
                     }
-                    if (code == 404) {
-                        lastErrorCode = code
+                    if (code == 404 || code == 503 || code == 504) {
                         moveToNextModel = true
                         break
                     }
                     if (code in 401..403 || code == 429) {
-                        lastErrorCode = code
                         if (index < apiKeys.lastIndex) continue
                         moveToNextModel = true
                         break
                     }
-                    if (code == 503 || code == 504) {
-                        lastErrorCode = code
-                        moveToNextModel = true
-                        break
-                    }
-                    if (code !in 200..299) throw IOException("Translation server returned $code.")
-                    val json = JSONObject(body)
-                    val candidates = json.optJSONArray("candidates")
+                    if (code !in 200..299) throw IOException("$taskName server returned $code.")
+                    val candidates = JSONObject(body).optJSONArray("candidates")
                         ?: throw IOException("Gemini returned no candidates.")
-                    val translation = candidates.optJSONObject(0)
+                    return candidates.optJSONObject(0)
                         ?.optJSONObject("content")
                         ?.optJSONArray("parts")
                         ?.optJSONObject(0)
                         ?.optString("text")
                         .orEmpty()
-                    return@runCatching translation.ifBlank { throw IOException("Gemini returned no translation text.") }
+                        .ifBlank { throw IOException("Gemini returned no text.") }
+                } catch (error: IOException) {
+                    // A timeout or connection failure is key-specific for this request.
+                    // Continue with the next configured key before moving to another model.
+                    attempts.add("$model: ${error.message ?: "network timeout"}")
+                    if (index == apiKeys.lastIndex) moveToNextModel = true
                 } finally {
                     connection.disconnect()
                 }
-                }
-                if (moveToNextModel) continue
             }
-            if (openRouterKey.isNotBlank()) {
-                var lastOpenRouterError: IOException? = null
-                for (model in AppPreferences.OPENROUTER_MODELS) {
-                    currentCoroutineContext().ensureActive()
-                    try {
-                        return@runCatching translateWithOpenRouter(prompt, openRouterKey, model)
-                    } catch (error: IOException) {
-                        attempts.add(error.message.orEmpty())
-                        lastOpenRouterError = error
-                    }
-                }
-                throw IOException("Translation fallback exhausted. " + attempts.distinct().joinToString("; "), lastOpenRouterError)
-            }
-            throw IOException("Gemini translation failed. " + attempts.distinct().joinToString("; "))
-        }.fold(
-            onSuccess = { Result.success(it) },
-            onFailure = {
-                if (it is CancellationException) throw it
-                Result.failure(TranslationException(it.message ?: "Translation failed."))
-            }
-        )
+            if (moveToNextModel) continue
+        }
+        throw IOException("Gemini $taskName failed. " + attempts.distinct().joinToString("; "))
     }
 
     private fun translateWithOpenRouter(prompt: String, apiKey: String, model: String): String {

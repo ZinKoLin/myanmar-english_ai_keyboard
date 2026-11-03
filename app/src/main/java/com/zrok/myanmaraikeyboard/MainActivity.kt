@@ -322,7 +322,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Allow network translation")
-                            Text("Text is sent only after you tap Translate.")
+                            Text("Text is sent only after you tap Translate or Grammar.")
                         }
                         Switch(checked = networkEnabled, onCheckedChange = {
                             networkEnabled = it
