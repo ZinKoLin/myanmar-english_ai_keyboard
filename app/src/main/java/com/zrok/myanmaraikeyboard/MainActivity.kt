@@ -34,8 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.zrok.myanmaraikeyboard.data.AppPreferences
 import com.zrok.myanmaraikeyboard.ui.MyanmarAiTheme
+import com.zrok.myanmaraikeyboard.ui.KeyFeedback
 
 class MainActivity : ComponentActivity() {
+    private val keyFeedback by lazy { KeyFeedback(this) }
+    override fun onDestroy() { keyFeedback.release(); super.onDestroy() }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val preferences = AppPreferences(applicationContext)
@@ -51,6 +54,9 @@ class MainActivity : ComponentActivity() {
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
             var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
+            var keyboardTone by remember { mutableStateOf(preferences.keyboardTone) }
+            var vibrationDuration by remember { mutableStateOf(preferences.vibrationDuration.toFloat()) }
+            var feedbackMessage by remember { mutableStateOf<String?>(null) }
             var saveMessage by remember { mutableStateOf<String?>(null) }
             var showAppearance by remember { mutableStateOf(false) }
             var showConnection by remember { mutableStateOf(false) }
@@ -122,6 +128,32 @@ class MainActivity : ComponentActivity() {
                             keyboardVibrationEnabled = it
                             preferences.keyboardVibrationEnabled = it
                         })
+                    }
+                    if (keyboardSoundEnabled) {
+                        Text("ခလုတ်အသံ ရွေးရန်")
+                        listOf("Beep", "Keypad", "Double tap").forEachIndexed { index, label ->
+                            TextButton(onClick = {
+                                keyboardTone = index
+                                preferences.keyboardTone = index
+                                keyFeedback.sound(index)
+                            }) { Text("${if (keyboardTone == index) "●" else "○"} $label") }
+                        }
+                        Text("အသံသည် Media volume အတိုင်းထွက်သည်။ Silent mode တွင် အသံပိတ်သည်။", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (keyboardVibrationEnabled) {
+                        Text("တုန်ခါချိန်: ${vibrationDuration.toInt()} ms")
+                        Slider(value = vibrationDuration, onValueChange = {
+                            vibrationDuration = it
+                            preferences.vibrationDuration = it.toInt()
+                        }, valueRange = 15f..80f)
+                        TextButton(onClick = {
+                            feedbackMessage = keyFeedback.vibrate(vibrationDuration.toInt())
+                                ?: "တုန်ခါမှု စမ်းသပ်ပြီးပါပြီ။ မတုန်လျှင် ဖုန်း၏ Touch vibration / DND ကို စစ်ပါ။"
+                        }) { Text("တုန်ခါမှု စမ်းရန်") }
+                        feedbackMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        TextButton(onClick = { startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) }) {
+                            Text("ဖုန်း၏ Sound / vibration settings ဖွင့်ရန်")
+                        }
                     }
                     }
                     SettingsCard("AI connection") {

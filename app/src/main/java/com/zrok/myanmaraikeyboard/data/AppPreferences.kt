@@ -59,6 +59,14 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean(KEY_KEYBOARD_SOUND, true)
         set(value) = preferences.edit().putBoolean(KEY_KEYBOARD_SOUND, value).apply()
 
+    var keyboardTone: Int
+        get() = preferences.getInt("keyboard_tone", 0).coerceIn(0, 2)
+        set(value) = preferences.edit().putInt("keyboard_tone", value.coerceIn(0, 2)).apply()
+
+    var vibrationDuration: Int
+        get() = preferences.getInt("vibration_duration", 35).coerceIn(15, 80)
+        set(value) = preferences.edit().putInt("vibration_duration", value.coerceIn(15, 80)).apply()
+
     var keyboardVibrationEnabled: Boolean
         get() = preferences.getBoolean(KEY_KEYBOARD_VIBRATION, true)
         set(value) = preferences.edit().putBoolean(KEY_KEYBOARD_VIBRATION, value).apply()

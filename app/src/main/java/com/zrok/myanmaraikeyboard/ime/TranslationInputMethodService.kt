@@ -73,6 +73,9 @@ class TranslationInputMethodService : InputMethodService() {
     private var keySoundEnabled = true
     private var keyVibrationEnabled = true
     private var toneGenerator: ToneGenerator? = null
+    private val feedback by lazy { com.zrok.myanmaraikeyboard.ui.KeyFeedback(this) }
+    private var selectedTone = 0
+    private var vibrationDuration = 35
     private val alternatives: Map<String, List<String>>
         get() = if (shifted) BurmesePopups.shiftedDigits else BurmesePopups.main
     private val isDark: Boolean
@@ -723,27 +726,16 @@ class TranslationInputMethodService : InputMethodService() {
     }
 
     private fun initializeKeySound() {
-        if (keySoundEnabled && toneGenerator == null) {
-            toneGenerator = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 35) }.getOrNull()
-        }
+        val preferences = AppPreferences(applicationContext)
+        selectedTone = preferences.keyboardTone
+        vibrationDuration = preferences.vibrationDuration
     }
 
     private fun playKeyFeedback() {
         if (keyVibrationEnabled) {
-            val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
-            if (vibrator?.hasVibrator() == true) {
-                val effect = VibrationEffect.createOneShot(18, VibrationEffect.DEFAULT_AMPLITUDE)
-                val attributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-                vibrator.vibrate(effect, attributes)
-            }
+            feedback.vibrate(vibrationDuration)
         }
-        val audio = getSystemService(AUDIO_SERVICE) as? AudioManager
-        if (keySoundEnabled && audio?.ringerMode == AudioManager.RINGER_MODE_NORMAL) {
-            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 35)
-        }
+        if (keySoundEnabled) feedback.sound(selectedTone)
     }
 
     private fun keyBackground(fill: Int) = GradientDrawable().apply {
@@ -798,6 +790,7 @@ class TranslationInputMethodService : InputMethodService() {
         characterPopup?.dismiss()
         toneGenerator?.release()
         toneGenerator = null
+        feedback.release()
         scope.cancel()
         super.onDestroy()
     }
