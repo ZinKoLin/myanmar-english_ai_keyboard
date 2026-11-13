@@ -10,7 +10,6 @@ class TranslationMemory(private val limit: Int = 64) {
     fun remember(key: Key, result: String) {
         if (key.text.isBlank() || result.isBlank()) return
         entries[key] = result
-        entries[Key(result, key.tone, key.direction.reversed())] = key.text
         while (entries.size > limit) entries.remove(entries.keys.first())
     }
 

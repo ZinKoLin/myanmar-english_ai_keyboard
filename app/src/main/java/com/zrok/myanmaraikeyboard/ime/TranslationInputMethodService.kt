@@ -2,10 +2,6 @@ package com.zrok.myanmaraikeyboard.ime
 
 import android.graphics.Color
 import android.content.Intent
-import android.content.ClipboardManager
-import android.content.ClipDescription
-import android.os.Build
-import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Vibrator
@@ -31,17 +27,23 @@ import android.app.Dialog
 import android.view.Window
 import android.view.WindowManager
 import android.widget.ScrollView
+import android.widget.HorizontalScrollView
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.zrok.myanmaraikeyboard.R
 import com.zrok.myanmaraikeyboard.LanguageSettingsActivity
 import com.zrok.myanmaraikeyboard.MainActivity
 import com.zrok.myanmaraikeyboard.data.AppPreferences
 import com.zrok.myanmaraikeyboard.data.TranslationRepository
+import com.zrok.myanmaraikeyboard.data.OnlineWordSuggestions
+import com.zrok.myanmaraikeyboard.data.SystemWordSuggestions
 import com.zrok.myanmaraikeyboard.model.Tone
 import com.zrok.myanmaraikeyboard.model.TranslationDirection
 import com.zrok.myanmaraikeyboard.model.TranslationMemory
 import com.zrok.myanmaraikeyboard.model.TranslationRefresh
 import com.zrok.myanmaraikeyboard.model.WordSuggestions
 import com.zrok.myanmaraikeyboard.model.translationRefresh
+import com.zrok.myanmaraikeyboard.ui.KeyboardKeyView
 import kotlinx.coroutines.*
 
 class TranslationInputMethodService : InputMethodService() {
@@ -50,6 +52,7 @@ class TranslationInputMethodService : InputMethodService() {
     private var shifted = false
     private var symbols = false
     private var emojiMode = false
+    private var stickerMode = false
     private var translating = false
     private var tone = Tone.NATURAL
     private var direction = TranslationDirection.MYANMAR_TO_ENGLISH
@@ -68,50 +71,21 @@ class TranslationInputMethodService : InputMethodService() {
     private lateinit var root: LinearLayout
     private lateinit var keys: LinearLayout
     private lateinit var suggestionStrip: LinearLayout
+    private lateinit var suggestionScroll: HorizontalScrollView
     private var suggestionsEnabled = true
+    private var onlineSuggestionsEnabled = true
+    private var inputVisible = false
+    private val onlineWords = OnlineWordSuggestions()
+    private val systemWords by lazy { SystemWordSuggestions(this, ::refreshSuggestions) }
+    private var suggestionRequest: Job? = null
+    private var requestedSuggestionContext: SuggestionContext? = null
+    private var suggestionGeneration = 0L
     private var lastSuggestionState: Pair<SuggestionContext?, WordSuggestions.Match?>? = null
     private lateinit var panel: LinearLayout
     private lateinit var source: EditText
     private lateinit var preview: EditText
     private var fullPreviewDialog: Dialog? = null
-    private var clipboardListenerRegistered = false
-    private var lastImportedClipboardText: String? = null
-    private val clipboardManager by lazy { getSystemService(CLIPBOARD_SERVICE) as ClipboardManager }
-    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
-        if (!clipboardListenerRegistered || !AppPreferences(applicationContext).autoImportCopiedText) return@OnPrimaryClipChangedListener
-        val editorType = currentInputEditorInfo?.inputType ?: return@OnPrimaryClipChangedListener
-        val variation = editorType and InputType.TYPE_MASK_VARIATION
-        val isPassword = (editorType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT &&
-            variation in setOf(InputType.TYPE_TEXT_VARIATION_PASSWORD, InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD, InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD) ||
-            (editorType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_NUMBER && variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-        if (isPassword) return@OnPrimaryClipChangedListener
-        val copiedText = runCatching {
-            val clip = clipboardManager.primaryClip ?: return@runCatching null
-            if (clip.itemCount == 0 || clip.description.hasMimeType("text/plain").not() && clip.description.hasMimeType("text/html").not()) return@runCatching null
-            if (Build.VERSION.SDK_INT >= 33 && clip.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE, false) == true) return@runCatching null
-            clip.getItemAt(0).coerceToText(applicationContext)?.toString()
-        }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 20_000 } ?: return@OnPrimaryClipChangedListener
-        if (copiedText == lastImportedClipboardText) return@OnPrimaryClipChangedListener
-        lastImportedClipboardText = copiedText
-        if (::root.isInitialized) root.post {
-            if (!clipboardListenerRegistered || !AppPreferences(applicationContext).autoImportCopiedText || !::source.isInitialized) return@post
-            request?.cancel()
-            cancelPendingRefresh()
-            translationGeneration++
-            rememberReviewedPair()
-            displayedPair = null
-            followSourceEdits = false
-            translating = true
-            withoutSourceWatch {
-                source.setText(copiedText)
-                source.setSelection(source.text.length)
-                preview.text.clear()
-            }
-            status.text = "Copied text added • Tap Translate when ready"
-            panel.visibility = View.VISIBLE
-            showTranslationPage(false, false)
-        }
-    }
+    private lateinit var translateToggle: TextView
     private lateinit var status: TextView
     private lateinit var sourceTab: TextView
     private lateinit var previewTab: TextView
@@ -133,18 +107,20 @@ class TranslationInputMethodService : InputMethodService() {
     private val feedback by lazy { com.zrok.myanmaraikeyboard.ui.KeyFeedback(this) }
     private var selectedTone = 0
     private var vibrationDuration = 35
+    private var soundVolume = 0.5f
+    private var systemHaptic = true
     private val alternatives: Map<String, List<String>>
         get() = if (shifted) BurmesePopups.shiftedDigits else BurmesePopups.main
-    private val isDark: Boolean
-        get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    // Match the installed Gboard charcoal keyboard theme independently of the companion app.
+    private val isDark: Boolean get() = true
     private val ink: Int
-        get() = if (isDark) Color.rgb(235, 238, 242) else Color.rgb(30, 42, 52)
+        get() = if (isDark) Color.rgb(227, 227, 227) else Color.rgb(30, 42, 52)
     private val surface: Int
-        get() = if (isDark) Color.rgb(30, 32, 35) else Color.rgb(225, 232, 237)
+        get() = if (isDark) Color.rgb(30, 31, 32) else Color.rgb(225, 232, 237)
     private val keyFill: Int
-        get() = if (isDark) Color.rgb(48, 50, 54) else Color.rgb(249, 251, 253)
+        get() = if (isDark) Color.rgb(55, 57, 59) else Color.rgb(249, 251, 253)
     private val specialFill: Int
-        get() = if (isDark) Color.rgb(70, 73, 79) else Color.rgb(204, 218, 230)
+        get() = if (isDark) Color.rgb(68, 71, 70) else Color.rgb(204, 218, 230)
     private val editorFill: Int
         get() = if (isDark) Color.rgb(43, 45, 49) else Color.rgb(249, 251, 253)
     private val border: Int
@@ -153,6 +129,21 @@ class TranslationInputMethodService : InputMethodService() {
         get() = if (isDark) Color.rgb(168, 199, 250) else Color.rgb(11, 87, 208)
     private val onAccent: Int
         get() = if (isDark) Color.rgb(6, 46, 111) else Color.WHITE
+
+    override fun onCreate() {
+        super.onCreate()
+        scope.launch(Dispatchers.IO) {
+            com.zrok.myanmaraikeyboard.data.MonDictionary.get(assets)
+        }
+        scope.launch {
+            withContext(Dispatchers.Default) {
+                assets.open("english_words.txt").bufferedReader().use { reader ->
+                    WordSuggestions.loadEnglishWords(reader.lineSequence())
+                }
+            }
+            if (::root.isInitialized) refreshSuggestions()
+        }
+    }
 
     override fun onCreateInputView(): View {
         val preferences = AppPreferences(applicationContext)
@@ -170,11 +161,18 @@ class TranslationInputMethodService : InputMethodService() {
         root.setPadding(dp(2), dp(4), dp(2), dp(8))
         root.setBackgroundColor(surface)
         val toolbar = LinearLayout(this)
-        val translateToggle = tile("Translate", true) {
+        translateToggle = tile("Translate", true) {
             translating = !translating
             panel.visibility = if (translating) View.VISIBLE else View.GONE
             if (translating) showTranslationPage(false, false)
-            else keys.visibility = View.VISIBLE
+            else {
+                request?.cancel()
+                cancelPendingRefresh()
+                translationGeneration++
+                keys.visibility = View.VISIBLE
+            }
+            updateTranslationToggle()
+            refreshSuggestions()
         }
         toolbar.addView(translateToggle, params(2f, 44))
         toneKey = tile(tone.label, true) {
@@ -203,28 +201,23 @@ class TranslationInputMethodService : InputMethodService() {
             cancelPendingRefresh()
             translationGeneration++
             rememberReviewedPair()
-            val validPair = displayedPair?.let {
-                it.text == source.text.toString() && it.direction == direction && it.tone == tone
-            } == true
             direction = direction.reversed()
             directionKey.text = direction.label
-            val previousSource = source.text.toString()
             val previousPreview = preview.text.toString()
             withoutSourceWatch {
                 source.setText(previousPreview)
-                preview.setText(previousSource)
+                preview.text.clear()
             }
-            displayedPair = if (validPair && previousPreview.isNotBlank())
-                TranslationMemory.Key(previousPreview, tone, direction) else null
+            displayedPair = null
+            followSourceEdits = false
             source.hint = direction.sourceHint
             preview.hint = direction.previewHint
-            status.text = "Text positions swapped • No new translation requested"
+            status.text = "Target changed • Tap Translate"
             showTranslationPage(false, false)
         }
         val translationHeader = LinearLayout(this)
         translationHeader.addView(directionKey, params(1.6f, 44))
         translationHeader.addView(toneKey, params(1f, 44))
-        translationHeader.addView(tile("Grammar", true) { runGrammarCheck() }, params(1f, 44))
         panel.addView(translationHeader)
         source = editor(direction.sourceHint)
         preview = editor(direction.previewHint)
@@ -295,7 +288,13 @@ class TranslationInputMethodService : InputMethodService() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
         lastSuggestionState = null
-        root.addView(suggestionStrip)
+        suggestionScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            isHorizontalFadingEdgeEnabled = true
+            addView(suggestionStrip)
+        }
+        root.addView(suggestionScroll)
         keys = column()
         root.addView(keys)
         renderKeys()
@@ -316,6 +315,7 @@ class TranslationInputMethodService : InputMethodService() {
             override fun afterTextChanged(s: Editable?) = Unit
         })
         suggestionsEnabled = preferences.suggestionsEnabled
+        onlineSuggestionsEnabled = preferences.onlineSuggestionsEnabled
         refreshSuggestions()
         return root
     }
@@ -458,53 +458,42 @@ class TranslationInputMethodService : InputMethodService() {
     }
 
     private fun clearTypedText() {
-        if (translating) {
-            request?.cancel()
-            cancelPendingRefresh()
-            translationGeneration++
-            followSourceEdits = false
-            displayedPair = null
-            withoutSourceWatch {
-                source.text.clear()
-                preview.text.clear()
-            }
-            status.text = ""
-            showTranslationPage(false, false)
-        } else {
-            val before = readExternalSnapshot()
-            if (before != null) {
-                val ic = currentInputConnection
-                ic?.performContextMenuAction(android.R.id.selectAll)
-                ic?.commitText("", 1)
-                val after = readExternalSnapshot()
-                if (ic != null && after != null) externalUndo = ExternalUndo(before.text.toString(), before.selectionStart, before.selectionEnd, after.text.toString(), after.selectionStart, after.selectionEnd)
-            }
-        }
-    }
-
-    private fun runGrammarCheck() {
-        val input = source.text.toString()
-        if (input.isBlank()) { status.text = "Type text first"; return }
         request?.cancel()
+        request = null
         cancelPendingRefresh()
-        val generation = ++translationGeneration
+        retranslate = null
+        translationGeneration++
+        followSourceEdits = false
         displayedPair = null
-        status.text = "Checking grammar…"
-        request = scope.launch {
-            TranslationRepository(AppPreferences(applicationContext))
-                .checkGrammar(input, direction.sourceLanguage)
-                .fold(
-                    onSuccess = { corrected ->
-                        if (generation != translationGeneration) return@launch
-                        if (source.text.toString() == input) {
-                            preview.setText(corrected)
-                            status.text = "Grammar checked • Review, edit, then Insert"
-                            showTranslationPage(true, true)
-                        } else status.text = "Source changed. Tap Grammar again."
-                    },
-                    onFailure = { if (generation == translationGeneration) status.text = it.message }
-                )
+        translationMemory.clear()
+        pairDrafts.clear()
+        localUndo.clear()
+        externalUndo = null
+        pendingPreVowel = false
+        stickerMode = false
+        emojiMode = false
+        deleteRepeat?.cancel()
+        cancelSuggestionRequests()
+        onlineWords.clear()
+        systemWords.close()
+        characterPopup?.dismiss()
+        fullPreviewDialog?.dismiss()
+        withoutSourceWatch {
+            source.setText("")
+            preview.setText("")
         }
+        status.text = ""
+        currentInputConnection?.let { ic ->
+            ic.beginBatchEdit()
+            try {
+                if (ic.performContextMenuAction(android.R.id.selectAll)) ic.commitText("", 1)
+                ic.finishComposingText()
+            } finally { ic.endBatchEdit() }
+        }
+        if (translating) showTranslationPage(false, false) else renderKeys()
+        // TextWatcher/selection notifications must not restore a cleared undo or draft.
+        localUndo.clear()
+        externalUndo = null
     }
 
     private fun commitTranslation(send: Boolean) {
@@ -533,7 +522,21 @@ class TranslationInputMethodService : InputMethodService() {
         } else clearTranslationDraft("Inserted into your text field")
     }
 
+    private fun updateTranslationToggle() {
+        translateToggle.text = if (translating) "Close" else "Translate"
+        translateToggle.contentDescription = if (translating) "Close translation" else "Open translation"
+        translateToggle.setTextColor(if (translating) Color.rgb(255, 218, 214) else ink)
+        translateToggle.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        translateToggle.background = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), keyBackground(if (translating) Color.rgb(140, 45, 44) else accent))
+            addState(intArrayOf(), keyBackground(if (translating) Color.rgb(100, 35, 36) else specialFill).apply {
+                if (translating) setStroke(dp(1), Color.rgb(240, 135, 130))
+            })
+        }
+    }
+
     private fun showTranslationPage(english: Boolean, expanded: Boolean, preserveCursor: Boolean = false) {
+        updateTranslationToggle()
         deleteRepeat?.cancel()
         editingPreview = english
         reviewing = expanded
@@ -552,7 +555,7 @@ class TranslationInputMethodService : InputMethodService() {
         previewTab.setTextColor(if (english) onAccent else ink)
         if (!expanded) {
             val editingLanguage = if (english) direction.target else direction.source
-            myanmar = editingLanguage.code == "my"
+            if (english) myanmar = editingLanguage.code == "my"
             active.textDirection = View.TEXT_DIRECTION_FIRST_STRONG
             shifted = false
             symbols = false
@@ -658,7 +661,7 @@ class TranslationInputMethodService : InputMethodService() {
         textSize = 16f
         typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
         setTextColor(ink)
-        setHintTextColor(if (isDark) Color.LTGRAY else Color.DKGRAY)
+        setHintTextColor(Color.rgb(132, 137, 146))
         gravity = Gravity.TOP or Gravity.START
         background = GradientDrawable().apply {
             setColor(editorFill)
@@ -675,8 +678,17 @@ class TranslationInputMethodService : InputMethodService() {
         deleteRepeat?.cancel()
         keys.removeAllViews()
         refreshSuggestions()
+        if (stickerMode) {
+            keys.addView(StickerPanel(this, ::insertSticker, {
+                startActivity(Intent(this, com.zrok.myanmaraikeyboard.StickerImportActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }, { stickerMode = false; emojiMode = true; renderKeys() },
+                { stickerMode = false; emojiMode = false; renderKeys() }))
+            return
+        }
         if (emojiMode) {
-            keys.addView(EmojiPanel(this, ::input, ::backspace, ::enableRepeatDelete) {
+            keys.addView(EmojiPanel(this, ::input, ::backspace, ::enableRepeatDelete, {
+                stickerMode = true; emojiMode = false; renderKeys()
+            }) {
                 emojiMode = false
                 renderKeys()
             })
@@ -712,12 +724,25 @@ class TranslationInputMethodService : InputMethodService() {
         }
         rows.forEachIndexed { index, row ->
             val line = LinearLayout(this)
+            val indentEnglish = !myanmar && !symbols && index == 1
+            if (indentEnglish) line.addView(View(this), LinearLayout.LayoutParams(0, dp(typingRowHeight()), 0.5f))
             if (index == 2) line.addView(tile(if (shifted) "⇧" else "↑", true) {
                 shifted = !shifted
                 renderKeys()
-            }, params(1.2f))
-            row.split(" ").forEach { value ->
+            }.apply {
+                kind = KeyboardKeyView.Kind.SHIFT
+                isSelected = shifted
+                contentDescription = "Shift"
+                setKeyIcon(if (shifted) R.drawable.ic_key_shift_active else R.drawable.ic_key_shift, if (shifted) onAccent else ink)
+            }, params(if (myanmar && !symbols) 1f else 1.5f))
+            row.split(" ").forEachIndexed { keyIndex, value ->
                 val key = tile(value) { input(value) }
+                if (!myanmar && !symbols && index == 0) {
+                    val number = ((keyIndex + 1) % 10).toString()
+                    key.cornerHint = number
+                    key.contentDescription = "$value; hold for $number"
+                    key.setOnLongClickListener { playKeyFeedback(); input(number); true }
+                }
                 if (myanmar && !symbols) {
                     alternatives[value]?.let { choices ->
                         key.contentDescription = "$value, hold for " + choices.joinToString(", ")
@@ -729,42 +754,81 @@ class TranslationInputMethodService : InputMethodService() {
                 }
                 line.addView(key, params())
             }
-            if (index == 2) line.addView(tile("⌫", true) { backspace() }.also(::enableRepeatDelete), params(1.2f))
+            if (indentEnglish) line.addView(View(this), LinearLayout.LayoutParams(0, dp(typingRowHeight()), 0.5f))
+            if (index == 2) line.addView(tile("⌫", true) { backspace() }.apply {
+                kind = KeyboardKeyView.Kind.BACKSPACE
+                contentDescription = "Delete"
+                setKeyIcon(R.drawable.ic_key_backspace)
+            }.also(::enableRepeatDelete), params(if (myanmar && !symbols) 1f else 1.5f))
             keys.addView(line)
         }
-        val bottom = LinearLayout(this)
-        bottom.addView(tile(if (symbols) "ABC" else "?123", true) { symbols = !symbols; shifted = false; renderKeys() }, params(1.3f))
-        bottom.addView(tile(if (myanmar) "EN" else "မြန်မာ", true) {
+        val bottom = LinearLayout(this).apply { isBaselineAligned = false }
+        bottom.addView(tile(if (symbols) "ABC" else if (myanmar) "?၁၂၃" else "?123", true) {
+            symbols = !symbols; shifted = false; renderKeys()
+        }.apply { kind = KeyboardKeyView.Kind.SYMBOLS }, params(1.5f))
+        bottom.addView(tile(if (myanmar) "၊" else ",") { input(if (myanmar) "၊" else ",") }.apply {
+            cornerHint = "☺"
+            centeredHint = true
+            contentDescription = "${if (myanmar) "၊" else ","}; hold for emoji"
+            setOnLongClickListener { emojiMode = true; renderKeys(); true }
+        }, params(1f))
+        bottom.addView(tile("", true) {
             myanmar = !myanmar; shifted = false; symbols = false; renderKeys()
         }.apply {
+            setKeyIcon(R.drawable.ic_language_globe)
             contentDescription = "Switch Myanmar / English; hold to use another keyboard"
             setOnLongClickListener {
                 (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
                     .showInputMethodPicker()
                 true
             }
-        }, params(1.2f))
-        bottom.addView(tile("☺", true) { emojiMode = true; renderKeys() }, params(0.8f))
-        bottom.addView(tile(if (myanmar) "၊" else ",", true) { input(if (myanmar) "၊" else ",") }, params(0.8f))
-        bottom.addView(tile(if (myanmar) "မြန်မာ" else "English") { input(" ") }, params(2.7f))
-        bottom.addView(tile(if (myanmar) "။" else ".", true) { input(if (myanmar) "။" else ".") }, params(0.8f))
+        }, params(1f))
+        bottom.addView(tile(if (myanmar) "မြန်မာ" else "English") { input(" ") }.apply { contentDescription = "Space" }, params(4f))
+        bottom.addView(tile(if (myanmar) "။" else ".") { input(if (myanmar) "။" else ".") }.apply {
+            setOnLongClickListener { showAlternatives(this, listOf("!", "?", ",", ".", "…", ":", ";", "\"", "'")); true }
+        }, params(1f))
         val editorAction = editorActionInfo()
-        bottom.addView(tile(editorAction.label, true) {
-            if (editorAction.action == EditorInfo.IME_ACTION_NONE || editorAction.action == EditorInfo.IME_ACTION_UNSPECIFIED) {
-                input("\n")
-            } else {
-                val connection = currentInputConnection
-                val completed = connection?.performEditorAction(editorAction.action) == true
-                if (!completed) input("\n")
+        bottom.addView(tile("↵", true) { input("\n") }.apply {
+            kind = KeyboardKeyView.Kind.ENTER
+            setKeyIcon(R.drawable.ic_key_enter, onAccent)
+            contentDescription = "Enter, new line"
+            if (!translating && editorAction.action != EditorInfo.IME_ACTION_NONE &&
+                editorAction.action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                contentDescription = "Enter, new line; hold for ${editorAction.label}"
+                setOnLongClickListener {
+                    currentInputConnection?.performEditorAction(editorAction.action) == true
+                }
             }
-        }.apply {
-            contentDescription = "Editor action ${editorAction.label}"
-        }, params(1.2f))
+        }, params(1.5f))
         keys.addView(bottom)
         widenTypingKeys()
     }
 
     private data class EditorActionInfo(val action: Int, val label: String)
+
+    private fun insertSticker(sticker: com.zrok.myanmaraikeyboard.data.StickerStore.Sticker) {
+        val info = currentInputEditorInfo ?: return
+        val accepts = info.contentMimeTypes.orEmpty().any { android.content.ClipDescription.compareMimeTypes(sticker.mime, it) }
+        if (!accepts) {
+            android.widget.Toast.makeText(this, "ဒီစာရိုက်နေရာက ပုံ / GIF မလက်ခံပါ။ ပုံလက်ခံသော chat app မှာ သုံးပါ။", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        scope.launch {
+            val store = com.zrok.myanmaraikeyboard.data.StickerStore(this@TranslationInputMethodService)
+            val uri = withContext(Dispatchers.IO) { runCatching { store.uri(sticker) }.getOrNull() }
+            if (uri == null) {
+                android.widget.Toast.makeText(this@TranslationInputMethodService, "Sticker ပုံကို ဖတ်မရပါ။", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (currentInputEditorInfo !== info) return@launch
+            val content = android.view.inputmethod.InputContentInfo(uri,
+                android.content.ClipDescription(sticker.label, arrayOf(sticker.mime)), null)
+            val accepted = currentInputConnection?.commitContent(content,
+                android.view.inputmethod.InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null) == true
+            if (!accepted) android.widget.Toast.makeText(this@TranslationInputMethodService,
+                "ဒီ app က sticker ကို လက်မခံပါ။", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private fun editorActionInfo(): EditorActionInfo {
         val action = currentInputEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
@@ -782,8 +846,9 @@ class TranslationInputMethodService : InputMethodService() {
 
     private fun addRow(values: List<String>) {
         val line = LinearLayout(this)
-        values.forEach { value ->
+        values.forEachIndexed { index, value ->
             val key = tile(value) { input(value) }
+            key.cornerHint = ((index + 1) % 10).toString()
             alternatives[value]?.let { choices ->
                 key.setOnLongClickListener { showAlternatives(key, choices); true }
             }
@@ -792,19 +857,49 @@ class TranslationInputMethodService : InputMethodService() {
         keys.addView(line)
     }
 
+    private fun typingRowHeight() = rowHeight + if (myanmar && !symbols) 3 else 9
+
+    private fun TextView.setKeyIcon(drawable: Int, color: Int = ink) {
+        val icon = getDrawable(drawable)!!.mutate().apply {
+            setTint(color)
+            setBounds(0, 0, dp(24), dp(24))
+        }
+        setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE)
+        text = android.text.SpannableString("\uFFFC").apply {
+            setSpan(android.text.style.ImageSpan(icon, android.text.style.ImageSpan.ALIGN_BOTTOM),
+                0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
     private fun widenTypingKeys() {
         for (rowIndex in 0 until keys.childCount) {
             val row = keys.getChildAt(rowIndex) as? LinearLayout ?: continue
+            row.isBaselineAligned = false
             row.isMotionEventSplittingEnabled = true
             for (keyIndex in 0 until row.childCount) {
-                val key = row.getChildAt(keyIndex) as? TextView ?: continue
+                val key = row.getChildAt(keyIndex) as? KeyboardKeyView ?: continue
                 val layout = key.layoutParams as LinearLayout.LayoutParams
                 layout.setMargins(0, 0, 0, 0)
-                layout.height = dp(rowHeight + 6)
+                layout.height = dp(typingRowHeight())
                 key.layoutParams = layout
-                key.background = InsetDrawable(key.background, dp(1), dp(3), dp(1), dp(3))
+                val function = key.kind
+                val fill = when (function) {
+                    KeyboardKeyView.Kind.ENTER -> accent
+                    KeyboardKeyView.Kind.SHIFT, KeyboardKeyView.Kind.BACKSPACE, KeyboardKeyView.Kind.SYMBOLS -> specialFill
+                    else -> keyFill
+                }
+                val radius = if (function == KeyboardKeyView.Kind.ENTER || function == KeyboardKeyView.Kind.SYMBOLS) 28 else 6
+                val background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_pressed), keyBackground(accent, radius))
+                    addState(intArrayOf(android.R.attr.state_selected), keyBackground(accent, radius))
+                    addState(intArrayOf(), keyBackground(fill, radius))
+                }
+                val verticalInset = if (myanmar && !symbols) 3 else 6
+                key.hintTopDp = verticalInset
+                key.setTextColor(if (function == KeyboardKeyView.Kind.ENTER || key.isSelected) onAccent else ink)
+                key.background = InsetDrawable(background, dp(3), dp(verticalInset), dp(3), dp(verticalInset))
                 key.setPadding(0, 0, 0, 0)
-                if (key.text.toString() != "⌫") {
+                if (function != KeyboardKeyView.Kind.BACKSPACE) {
                     key.setOnTouchListener { view, event ->
                         if (event.actionMasked == MotionEvent.ACTION_DOWN) view.isPressed = true
                         // Returning false preserves click cancellation, long-press and accessibility.
@@ -945,14 +1040,30 @@ class TranslationInputMethodService : InputMethodService() {
     }
 
     private val updateSuggestions = Runnable {
+        val context = if (suggestionsEnabled && !myanmar && !symbols && !emojiMode && !(translating && reviewing)) suggestionContext() else null
+        val local = context?.let { WordSuggestions.suggest(it.before, it.after, myanmar) }
+        val checked = local?.let { systemWords.cached(it.prefix) }
+        val verified = local?.let { match ->
+            when (checked?.correct) {
+                true -> match
+                false -> match.copy(words = match.words.filterNot { it.equals(match.prefix, true) }, isKnownWord = false)
+                null -> match
+            }
+        }
+        val online = if (onlineSuggestionsEnabled && local != null) onlineWords.cached(local.prefix).orEmpty() else emptyList()
+        val match = verified?.let { WordSuggestions.mergeOnline(it, checked?.words.orEmpty() + online) }
+        renderSuggestions(context, match)
+        requestBetterSuggestions(context, local)
+    }
+
+    private fun renderSuggestions(context: SuggestionContext?, match: WordSuggestions.Match?) {
         if (::suggestionStrip.isInitialized) {
-            val context = if (suggestionsEnabled && !symbols && !emojiMode && !(translating && reviewing)) suggestionContext() else null
-            val match = context?.let { WordSuggestions.suggest(it.before, it.after, myanmar) }
             val state = context to match
-            if (state == lastSuggestionState) return@Runnable
+            if (state == lastSuggestionState) return
+            if (lastSuggestionState?.first != context) suggestionScroll.scrollTo(0, 0)
             lastSuggestionState = state
             suggestionStrip.removeAllViews()
-            suggestionStrip.visibility = if (match?.words.isNullOrEmpty()) View.GONE else View.VISIBLE
+            suggestionScroll.visibility = if (match?.words.isNullOrEmpty()) View.GONE else View.VISIBLE
             match?.words?.forEach { word ->
                 suggestionStrip.addView(tile(word) {
                     if (context != null && suggestionContext() == context) {
@@ -979,9 +1090,53 @@ class TranslationInputMethodService : InputMethodService() {
                 }.apply {
                     textSize = 15f
                     contentDescription = "Use suggestion $word"
+                    if (match.isKnownWord && word.equals(match.prefix, ignoreCase = true)) {
+                        text = "✓ $word"
+                        setTextColor(accent)
+                        contentDescription = "Known English word $word"
+                    }
                     setAutoSizeTextTypeUniformWithConfiguration(11, 17, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-                }, params(1f, 44))
+                }, LinearLayout.LayoutParams(
+                    ((resources.displayMetrics.widthPixels - root.paddingLeft - root.paddingRight) / 3 - dp(4)).coerceAtLeast(dp(80)), dp(44)
+                ).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) })
             }
+        }
+    }
+
+    private fun cancelSuggestionRequests() {
+        suggestionGeneration++
+        suggestionRequest?.cancel()
+        suggestionRequest = null
+        requestedSuggestionContext = null
+        systemWords.cancel()
+    }
+
+    private fun hasInternet(): Boolean = runCatching {
+        val manager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork)
+        capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }.getOrDefault(false)
+
+    private fun requestBetterSuggestions(context: SuggestionContext?, match: WordSuggestions.Match?) {
+        if (!inputVisible || context == null || match == null || !OnlineWordSuggestions.eligible(match.prefix)) {
+            cancelSuggestionRequests()
+            return
+        }
+        if (requestedSuggestionContext == context) return
+        cancelSuggestionRequests()
+        requestedSuggestionContext = context
+        val generation = suggestionGeneration
+        suggestionRequest = scope.launch {
+            delay(150)
+            if (suggestionContext() != context || !inputVisible) return@launch
+            systemWords.request(match.prefix)
+            delay(300)
+            if (!onlineSuggestionsEnabled || suggestionContext() != context || !inputVisible || !hasInternet()) return@launch
+            if (onlineWords.cached(match.prefix) != null) return@launch
+            val words = onlineWords.fetch(match.prefix)
+            ensureActive()
+            if (words != null && generation == suggestionGeneration && inputVisible && suggestionContext() == context) refreshSuggestions()
         }
     }
 
@@ -1089,21 +1244,24 @@ class TranslationInputMethodService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        inputVisible = false
+        cancelSuggestionRequests()
         deleteRepeat?.cancel()
-        stopClipboardMonitoring()
         super.onFinishInputView(finishingInput)
     }
 
     override fun onFinishInput() {
+        inputVisible = false
+        cancelSuggestionRequests()
         deleteRepeat?.cancel()
         fullPreviewDialog?.dismiss()
         lastSuggestionState = null
         if (::root.isInitialized) root.removeCallbacks(updateSuggestions)
-        if (::suggestionStrip.isInitialized) suggestionStrip.visibility = View.GONE
+        if (::suggestionScroll.isInitialized) suggestionScroll.visibility = View.GONE
         super.onFinishInput()
     }
 
-    private fun tile(label: String, special: Boolean = false, action: () -> Unit) = TextView(this).apply {
+    private fun tile(label: String, special: Boolean = false, action: () -> Unit) = KeyboardKeyView(this).apply {
         // Combining marks need a visible base on keycaps; commit only the original label.
         text = if (label.length == 1 && Character.getType(label[0]) in listOf(
             Character.NON_SPACING_MARK.toInt(), Character.COMBINING_SPACING_MARK.toInt()
@@ -1111,7 +1269,8 @@ class TranslationInputMethodService : InputMethodService() {
         textSize = if (label.length > 2) 13f else this@TranslationInputMethodService.textSize.toFloat()
         setSingleLine(true)
         if (label.length <= 2) {
-            setAutoSizeTextTypeUniformWithConfiguration(11, this@TranslationInputMethodService.textSize, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            val maxSize = if (label == "ဪ") minOf(16, this@TranslationInputMethodService.textSize) else this@TranslationInputMethodService.textSize
+            setAutoSizeTextTypeUniformWithConfiguration(if (label == "ဪ") 9 else 11, maxSize, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         }
         typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
         gravity = Gravity.CENTER
@@ -1126,7 +1285,7 @@ class TranslationInputMethodService : InputMethodService() {
         contentDescription = label
         isClickable = true
         setOnClickListener {
-            playKeyFeedback()
+            playKeyFeedback(label)
             action()
         }
     }
@@ -1135,18 +1294,20 @@ class TranslationInputMethodService : InputMethodService() {
         val preferences = AppPreferences(applicationContext)
         selectedTone = preferences.keyboardTone
         vibrationDuration = preferences.vibrationDuration
+        soundVolume = preferences.keyboardSoundVolume
+        systemHaptic = preferences.systemKeyboardHaptic
     }
 
-    private fun playKeyFeedback() {
+    private fun playKeyFeedback(label: String = "") {
         if (keyVibrationEnabled) {
-            feedback.vibrate(vibrationDuration)
+            feedback.vibrate(vibrationDuration, root, systemHaptic)
         }
-        if (keySoundEnabled) feedback.sound(selectedTone)
+        if (keySoundEnabled) feedback.sound(selectedTone, label, soundVolume)
     }
 
-    private fun keyBackground(fill: Int) = GradientDrawable().apply {
+    private fun keyBackground(fill: Int, radius: Int = 12) = GradientDrawable().apply {
         setColor(fill)
-        cornerRadius = dp(12).toFloat()
+        cornerRadius = dp(radius).toFloat()
     }
 
     private fun primaryStyle(view: TextView) {
@@ -1162,6 +1323,8 @@ class TranslationInputMethodService : InputMethodService() {
     override fun onEvaluateFullscreenMode() = false
     override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        inputVisible = true
+        cancelSuggestionRequests()
         if (!::source.isInitialized || !::keys.isInitialized) return
         val configured = AppPreferences(applicationContext).translationDirection
         if (configured != configuredDirection) {
@@ -1186,9 +1349,9 @@ class TranslationInputMethodService : InputMethodService() {
             showTranslationPage(false, false)
         }
         val preferences = AppPreferences(applicationContext)
-        if (preferences.autoImportCopiedText) startClipboardMonitoring() else stopClipboardMonitoring()
         keySoundEnabled = preferences.keyboardSoundEnabled
         suggestionsEnabled = preferences.suggestionsEnabled
+        onlineSuggestionsEnabled = preferences.onlineSuggestionsEnabled
         refreshSuggestions()
         toneKey.isEnabled = !preferences.azureEnabled
         toneKey.text = if (preferences.azureEnabled) "Azure" else tone.label
@@ -1202,20 +1365,10 @@ class TranslationInputMethodService : InputMethodService() {
         renderKeys()
     }
 
-    private fun startClipboardMonitoring() {
-        if (clipboardListenerRegistered) return
-        runCatching { clipboardManager.addPrimaryClipChangedListener(clipboardListener) }
-            .onSuccess { clipboardListenerRegistered = true }
-    }
-
-    private fun stopClipboardMonitoring() {
-        if (!clipboardListenerRegistered) return
-        runCatching { clipboardManager.removePrimaryClipChangedListener(clipboardListener) }
-        clipboardListenerRegistered = false
-        lastImportedClipboardText = null
-    }
     override fun onDestroy() {
-        stopClipboardMonitoring()
+        cancelSuggestionRequests()
+        systemWords.close()
+        onlineWords.clear()
         fullPreviewDialog?.dismiss()
         translationMemory.clear()
         characterPopup?.dismiss()

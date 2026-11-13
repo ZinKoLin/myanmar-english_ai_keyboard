@@ -6,11 +6,11 @@ import org.junit.Test
 class TranslationMemoryTest {
     private val key = TranslationMemory.Key("မင်္ဂလာပါ", Tone.NATURAL, TranslationDirection.MYANMAR_TO_ENGLISH)
 
-    @Test fun repeatedAndReverseRequestsUseTheExistingPair() {
+    @Test fun repeatedRequestsUseMemoryButReverseRequiresDetection() {
         val memory = TranslationMemory()
         memory.remember(key, "Hello")
         assertEquals("Hello", memory.find(key))
-        assertEquals("မင်္ဂလာပါ", memory.find(
+        assertNull(memory.find(
             TranslationMemory.Key("Hello", Tone.NATURAL, TranslationDirection.ENGLISH_TO_MYANMAR)
         ))
     }
@@ -22,16 +22,16 @@ class TranslationMemoryTest {
         assertNull(memory.find(key.copy(tone = Tone.FORMAL)))
     }
 
-    @Test fun editedTranslationIsKeptWhenSwappingDirections() {
+    @Test fun editedTranslationIsKeptForTheSameTarget() {
         val memory = TranslationMemory()
         memory.remember(key, "Hello")
         memory.remember(key, "Hi there")
         assertEquals("Hi there", memory.find(key))
-        assertEquals(key.text, memory.find(key.copy(text = "Hi there", direction = key.direction.reversed())))
+        assertNull(memory.find(key.copy(text = "Hi there", direction = key.direction.reversed())))
     }
 
     @Test fun clearRemovesBothDirectionsAndStorageIsBounded() {
-        val memory = TranslationMemory(2)
+        val memory = TranslationMemory(1)
         memory.remember(key, "Hello")
         memory.remember(key.copy(text = "ကျေးဇူး"), "Thanks")
         assertNull(memory.find(key))

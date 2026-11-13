@@ -10,7 +10,7 @@
 
 Keys are encrypted on the device and never bundled with the application. The endpoint is fixed to Microsoft's HTTPS Translator v3 API. Network translation must be enabled.
 
-Azure mode uses only Azure. Errors are shown without automatically sending text to another provider. Turn Azure off to return to Gemini/OpenRouter mode. Saved keys are retained.
+Azure mode uses only Azure for network translation. Errors are shown without automatically sending text to another provider. Turn Azure off to return to Gemini mode. The current build disables OpenRouter fallback with `GEMINI_ONLY = true`. Saved keys are retained. Unambiguous local Mon dictionary matches can be returned without contacting Azure.
 
 Azure uses standard translation without Natural/Formal/Casual prompt control. The language chooser still includes languages for the AI providers; Azure may reject pairs it does not support.
 

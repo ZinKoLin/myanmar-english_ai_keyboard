@@ -18,6 +18,15 @@ keystore.properties
 captures/
 zrok-main.png
 .kotlin/
+.android/
+.agents/
+.codex/
+.uv-cache/
+.mon-research-env/
+artifacts/
+dist/
+skills-lock.json
 zrok-*.xml
 *.png
 !popup-audit/*-sheet.png
+!branding/*.png

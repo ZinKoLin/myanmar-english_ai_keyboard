@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MyanmarAiKeyboard"
+rootProject.name = "BrainKeyboard"
 include(":app")

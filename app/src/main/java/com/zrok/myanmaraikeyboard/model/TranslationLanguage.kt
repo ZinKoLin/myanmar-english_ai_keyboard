@@ -3,8 +3,15 @@ package com.zrok.myanmaraikeyboard.model
 import java.util.Locale
 
 data class TranslationLanguage(val code: String, val name: String) {
-    val nativeName: String get() = if (code == "my") "မြန်မာ" else
-        Locale.forLanguageTag(code).getDisplayName(Locale.forLanguageTag(code))
+    val nativeName: String get() = when (code) {
+        "my" -> "မြန်မာ"
+        "mnw" -> "ဘာသာမန် (မွန်)"
+        "shn" -> "လိၵ်ႈတႆး (ရှမ်း)"
+        "ksw" -> "စကောကရင်"
+        "kac" -> "Jinghpaw (ကချင်)"
+        else -> Locale.forLanguageTag(code).getDisplayName(Locale.forLanguageTag(code))
+    }
+    val experimental: Boolean get() = code in setOf("mnw", "shn", "ksw", "kac")
     val shortCode: String get() = code.substringBefore('-').uppercase(Locale.ROOT)
     val flag: String get() = when (code) {
         "my" -> "🇲🇲"; "en" -> "🇬🇧"; "th" -> "🇹🇭"; "ja" -> "🇯🇵"
@@ -18,10 +25,11 @@ data class TranslationLanguage(val code: String, val name: String) {
         else -> "🌐"
     }
     val badge: String get() = "$flag $shortCode"
-    val displayName: String get() = "$flag $name — $nativeName"
+    val displayName: String get() = "$flag $name — $nativeName" + if (experimental) " · AI စမ်းသပ်" else ""
 }
 
-/** General-use text languages from Google's Firebase AI Logic model documentation.
+/** General-use text languages from Google's Firebase AI Logic model documentation,
+ * plus explicitly marked experimental Myanmar ethnic language choices for LLM translation.
  * Snapshot: 2026-11-03. Chinese is exposed as two script choices.
  * https://firebase.google.com/docs/ai-logic/models#supported-languages
  */
@@ -98,6 +106,10 @@ mr|Marathi
 mni-Mtei|Meiteilon (Manipuri)
 mn|Mongolian
 my|Myanmar (Burmese)
+mnw|Mon
+shn|Shan
+ksw|S'gaw Karen
+kac|Kachin (Jinghpaw)
 ne|Nepali
 no|Norwegian
 ny|Nyanja (Chichewa)

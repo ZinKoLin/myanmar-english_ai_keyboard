@@ -7,6 +7,7 @@ import com.zrok.myanmaraikeyboard.model.SupportedLanguages
 import com.zrok.myanmaraikeyboard.model.TranslationDirection
 
 class AppPreferences(context: Context) {
+    internal val assets = context.applicationContext.assets
     private val preferences = EncryptedSharedPreferences.create(
         context,
         "private_settings",
@@ -83,13 +84,21 @@ class AppPreferences(context: Context) {
         get() = preferences.getBoolean("suggestions_enabled", true)
         set(value) = preferences.edit().putBoolean("suggestions_enabled", value).apply()
 
-    var autoImportCopiedText: Boolean
-        get() = preferences.getBoolean("auto_import_copied_text", true)
-        set(value) = preferences.edit().putBoolean("auto_import_copied_text", value).apply()
+    var onlineSuggestionsEnabled: Boolean
+        get() = preferences.getBoolean("online_suggestions_enabled", true)
+        set(value) = preferences.edit().putBoolean("online_suggestions_enabled", value).apply()
 
     var keyboardTone: Int
-        get() = preferences.getInt("keyboard_tone", 0).coerceIn(0, 2)
-        set(value) = preferences.edit().putInt("keyboard_tone", value.coerceIn(0, 2)).apply()
+        get() = preferences.getInt("keyboard_tone", 3).coerceIn(0, 3)
+        set(value) = preferences.edit().putInt("keyboard_tone", value.coerceIn(0, 3)).apply()
+
+    var keyboardSoundVolume: Float
+        get() = preferences.getFloat("keyboard_sound_volume", 0.5f).coerceIn(0f, 1f)
+        set(value) = preferences.edit().putFloat("keyboard_sound_volume", value.coerceIn(0f, 1f)).apply()
+
+    var systemKeyboardHaptic: Boolean
+        get() = preferences.getBoolean("system_keyboard_haptic", true)
+        set(value) = preferences.edit().putBoolean("system_keyboard_haptic", value).apply()
 
     var vibrationDuration: Int
         get() = preferences.getInt("vibration_duration", 35).coerceIn(15, 80)
@@ -158,10 +167,9 @@ class AppPreferences(context: Context) {
             "qwen/qwen-2-7b-instruct:free"
         )
         val DEFAULT_GEMINI_MODELS = listOf(
-            "gemini-3.6-flash",
             "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
-            "gemini-3.7-flash"
+            "gemini-3.6-flash"
         )
     }
 }

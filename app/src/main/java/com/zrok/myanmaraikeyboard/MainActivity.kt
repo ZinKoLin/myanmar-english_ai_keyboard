@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -64,7 +65,7 @@ class MainActivity : ComponentActivity() {
             var keyboardTextSize by remember { mutableStateOf(preferences.keyboardTextSize.toFloat()) }
             var keyboardSoundEnabled by remember { mutableStateOf(preferences.keyboardSoundEnabled) }
             var suggestionsEnabled by remember { mutableStateOf(preferences.suggestionsEnabled) }
-            var autoImportCopiedText by remember { mutableStateOf(preferences.autoImportCopiedText) }
+            var onlineSuggestionsEnabled by remember { mutableStateOf(preferences.onlineSuggestionsEnabled) }
             var keyboardVibrationEnabled by remember { mutableStateOf(preferences.keyboardVibrationEnabled) }
             var keyboardTone by remember { mutableStateOf(preferences.keyboardTone) }
             var vibrationDuration by remember { mutableStateOf(preferences.vibrationDuration.toFloat()) }
@@ -83,7 +84,17 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text("Myanmar AI Keyboard", style = MaterialTheme.typography.headlineSmall)
+                    androidx.compose.foundation.layout.Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        androidx.compose.foundation.Image(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.ic_brain_keyboard),
+                            contentDescription = null,
+                            modifier = Modifier.size(52.dp)
+                        )
+                        Text(androidx.compose.ui.res.stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall)
+                    }
                     Text("သင့်စိတ်ကြိုက် ပြင်ဆင်ပါ", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }, modifier = Modifier.fillMaxWidth()) {
                         Text("Keyboard ဖွင့်ရန်")
@@ -97,12 +108,25 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
                             Text("စကားလုံး အကြံပြုချက်")
-                            Text("မြန်မာ / English • Offline", style = MaterialTheme.typography.bodySmall)
+                            Text("English • System spell checker + Offline dictionary", style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(checked = suggestionsEnabled, onCheckedChange = {
                             suggestionsEnabled = it
                             preferences.suggestionsEnabled = it
                         })
+                    }
+                    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Online word suggestion")
+                            Text("ရိုက်နေသည့် English word တစ်လုံးကိုသာ Datamuse သို့ ပို့ပြီး အနီးစပ်ဆုံး words ပြပေးမည်။", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = onlineSuggestionsEnabled, enabled = suggestionsEnabled, onCheckedChange = {
+                            onlineSuggestionsEnabled = it
+                            preferences.onlineSuggestionsEnabled = it
+                        })
+                    }
+                    TextButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.datamuse.com/api/"))) }) {
+                        Text("Datamuse API နှင့် privacy အကြောင်း")
                     }
                     TextButton(onClick = { showAppearance = !showAppearance }) {
                         Text("လက်ကွက်နှင့် စာလုံးအရွယ် ${if (showAppearance) "▴" else "▾"}")
@@ -156,23 +180,34 @@ class MainActivity : ComponentActivity() {
                     }
                     if (keyboardSoundEnabled) {
                         Text("ခလုတ်အသံ ရွေးရန်")
-                        listOf("Beep", "Keypad", "Double tap").forEachIndexed { index, label ->
+                        listOf("Beep", "Keypad", "Double tap", "Gboard ပုံစံ · System keyboard click").forEachIndexed { index, label ->
                             TextButton(onClick = {
                                 keyboardTone = index
                                 preferences.keyboardTone = index
-                                keyFeedback.sound(index)
+                                keyFeedback.sound(index, volume = preferences.keyboardSoundVolume)
                             }) { Text("${if (keyboardTone == index) "●" else "○"} $label") }
                         }
-                        Text("အသံသည် Media volume အတိုင်းထွက်သည်။ Silent mode တွင် အသံပိတ်သည်။", style = MaterialTheme.typography.bodySmall)
+                        var soundVolume by remember { mutableStateOf(preferences.keyboardSoundVolume) }
+                        Text("ခလုတ်အသံအကျယ်: ${(soundVolume * 100).toInt()}%")
+                        Slider(value = soundVolume, onValueChange = { soundVolume = it; preferences.keyboardSoundVolume = it },
+                            onValueChangeFinished = { keyFeedback.sound(keyboardTone, volume = soundVolume) })
+                        Text("System keyboard click တွင် ဖုန်းစနစ်၏ ခလုတ်အသံကို သုံးသည်။ Silent mode တွင် အသံပိတ်သည်။", style = MaterialTheme.typography.bodySmall)
                     }
                     if (keyboardVibrationEnabled) {
-                        Text("တုန်ခါချိန်: ${vibrationDuration.toInt()} ms")
+                        var systemHaptic by remember { mutableStateOf(preferences.systemKeyboardHaptic) }
+                        androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("System keyboard haptic", modifier = Modifier.weight(1f))
+                            Switch(checked = systemHaptic, onCheckedChange = { systemHaptic = it; preferences.systemKeyboardHaptic = it })
+                        }
+                        if (!systemHaptic) {
+                        Text("တုန်ခါအား: ${vibrationDuration.toInt()}")
                         Slider(value = vibrationDuration, onValueChange = {
                             vibrationDuration = it
                             preferences.vibrationDuration = it.toInt()
                         }, valueRange = 15f..80f)
+                        }
                         TextButton(onClick = {
-                            feedbackMessage = keyFeedback.vibrate(vibrationDuration.toInt())
+                            feedbackMessage = keyFeedback.vibrate(vibrationDuration.toInt(), window.decorView, systemHaptic)
                                 ?: "တုန်ခါမှု စမ်းသပ်ပြီးပါပြီ။ မတုန်လျှင် ဖုန်း၏ Touch vibration / DND ကို စစ်ပါ။"
                         }) { Text("တုန်ခါမှု စမ်းရန်") }
                         feedbackMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
@@ -224,6 +259,18 @@ class MainActivity : ComponentActivity() {
                         if (azureEnabled) connectionResult?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                     SettingsCard("Gemini connection") {
+                    Text("မွန်ဘာသာပြန်: MonDictDB အဘိဓာန်အချက်အလက် ၁၉,၀၈၀ ခုကို အထောက်အကူပြု သုံးထားသည်။ အဓိပ္ပာယ်တစ်မျိုးတည်းရှိသော စကားလုံးအတိအကျကို ဖုန်းထဲကနေ ပြန်ပေးပြီး စာကြောင်းများကို AI ဖြင့် ပြန်သည်။ မွန်ဘာသာတတ်သူဖြင့် ရလဒ်စစ်ဆေးပါ။", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Barnista/MonDictDB"))) }) {
+                        Text("မွန်အဘိဓာန်အရင်းအမြစ်နှင့် license ↗")
+                    }
+                    Text("Gemini key ရယူရန်", style = MaterialTheme.typography.titleSmall)
+                    Text("၁။ Google AI Studio ကိုဖွင့်ပြီး Google account ဖြင့် ဝင်ပါ။\n၂။ API Keys စာမျက်နှာမှာ Create API key နှိပ်ပြီး project ရွေးပါ သို့မဟုတ် အသစ်ဖန်တီးပါ။\n၃။ Key ကို Copy ကူးပြီး အောက်က Gemini API key 1 မှာ ထည့်ပါ။\n၄။ Save connection နှိပ်ပြီး Test saved connection ဖြင့် စမ်းပါ။", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://aistudio.google.com/api-keys"))) }) {
+                        Text("Google AI Studio မှ API key ရယူရန် ↗")
+                    }
+                    TextButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://ai.google.dev/gemini-api/docs/api-key"))) }) {
+                        Text("Google ၏ API key လမ်းညွှန် ↗")
+                    }
                     Text(if (azureEnabled) "Azure mode • Gemini သုံးရန် Azure switch ကို Off လုပ်ပါ။" else "Gemini mode • Azure ကို နောက်မှ ဖွင့်စမ်းနိုင်သည်။", style = MaterialTheme.typography.bodySmall)
                     if (!AppPreferences.GEMINI_ONLY) {
                     Text(if (azureEnabled) "Azure mode သုံးနေသည်။ Gemini / OpenRouter ပြန်သုံးရန် Azure ကို Off လုပ်ပါ။" else "Gemini / OpenRouter mode", style = MaterialTheme.typography.bodySmall)
@@ -287,7 +334,7 @@ class MainActivity : ComponentActivity() {
                         saveMessage = if (preferences.apiKeys.isEmpty()) {
                             "Please enter a Gemini API key first."
                         } else {
-                            "Connection saved. Keys will fail over on 429/401/403."
+                            "Connection saved. Request တစ်ခုလုံး ၂၀–၄၀ စက္ကန့်အတွင်း၊ အများဆုံး ၃ ကြိမ်သာ စမ်းမည်။"
                         }
                     }) { Text("Save connection") }
                     saveMessage?.let { Text(it) }
@@ -307,22 +354,8 @@ class MainActivity : ComponentActivity() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Copy လုပ်တာနဲ့ Translate box ထဲထည့်ရန်")
-                            Text("Keyboard ဖွင့်ထားချိန် clipboard စာသားကို ထည့်မယ်။ ပို့ဖို့ Translate ကို ကိုယ်တိုင်နှိပ်ပါ။")
-                        }
-                        Switch(checked = autoImportCopiedText, onCheckedChange = {
-                            autoImportCopiedText = it
-                            preferences.autoImportCopiedText = it
-                        })
-                    }
-                    HorizontalDivider()
-                    androidx.compose.foundation.layout.Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(Modifier.weight(1f)) {
                             Text("Allow network translation")
-                            Text("Text is sent only after you tap Translate or Grammar.")
+                            Text("Text is sent for translation when you tap Translate or edit an active translation.")
                         }
                         Switch(checked = networkEnabled, onCheckedChange = {
                             networkEnabled = it

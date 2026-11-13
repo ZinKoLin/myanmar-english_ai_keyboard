@@ -8,7 +8,7 @@ class SupportedLanguagesTest {
         val codes = SupportedLanguages.all.map { it.code }
         assertTrue(codes.size > 100)
         assertEquals(codes.size, codes.distinct().size)
-        assertTrue(codes.containsAll(listOf("my", "en", "th", "ja", "ar", "zh-Hans", "zh-Hant")))
+        assertTrue(codes.containsAll(listOf("my", "en", "th", "ja", "ar", "zh-Hans", "zh-Hant", "mnw", "shn", "ksw", "kac")))
     }
 
     @Test fun arbitraryPairsReverseWithoutLosingTheirLanguageIdentity() {
@@ -16,8 +16,11 @@ class SupportedLanguagesTest {
         assertEquals("Thai", direction.sourceLanguage)
         assertEquals("Japanese", direction.targetLanguage)
         assertEquals(direction, direction.reversed().reversed())
-        assertTrue(direction.label.contains("TH"))
+        assertTrue(direction.label.contains("Auto"))
         assertTrue(direction.label.contains("JA"))
+        assertTrue(direction.reversed().label.contains("TH"))
+        assertEquals(direction.sourceLabel, direction.reversed().sourceLabel)
+        assertEquals(direction.sourceHint, direction.reversed().sourceHint)
     }
 
     @Test fun translationMemorySeparatesLanguagePairs() {
@@ -27,7 +30,7 @@ class SupportedLanguagesTest {
         val key = TranslationMemory.Key("Hello", Tone.NATURAL, thai)
         memory.remember(key, "สวัสดี")
         assertNull(memory.find(key.copy(direction = japanese)))
-        assertEquals("Hello", memory.find(key.copy(text = "สวัสดี", direction = thai.reversed())))
+        assertNull(memory.find(key.copy(text = "สวัสดี", direction = thai.reversed())))
     }
 
     @Test(expected = IllegalArgumentException::class)

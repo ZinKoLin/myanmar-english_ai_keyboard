@@ -4,11 +4,11 @@ data class TranslationDirection(val source: TranslationLanguage, val target: Tra
     init { require(source.code != target.code) { "Choose two different languages" } }
     val sourceLanguage get() = source.name
     val targetLanguage get() = target.name
-    val sourceLabel get() = if (source.code == "my") "မြန်မာမူရင်း" else "${source.badge} source"
+    val sourceLabel get() = "မူရင်း (Auto)"
     val targetLabel get() = if (target.code == "my") "မြန်မာ preview" else "${target.badge} preview"
-    val sourceHint get() = if (source.code == "my") "မြန်မာစာ ရိုက်ထည့်ပါ" else "Type or paste ${source.name} text"
+    val sourceHint get() = "မည်သည့်ဘာသာမဆို ရိုက်ထည့်ပါ သို့မဟုတ် paste လုပ်ပါ"
     val previewHint get() = "Your ${target.name} translation will appear here."
-    val label get() = "${source.badge} → ${target.badge} ⇄"
+    val label get() = "Auto → ${target.badge} ⇄"
     fun reversed() = TranslationDirection(target, source)
 
     companion object {

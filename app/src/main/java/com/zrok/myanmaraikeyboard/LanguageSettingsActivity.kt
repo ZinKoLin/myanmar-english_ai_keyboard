@@ -45,14 +45,15 @@ class LanguageSettingsActivity : Activity() {
             this.text = text; textSize = size; setPadding(0, dp(4), 0, dp(4))
         }
         root.addView(label("Translation languages", 22f))
-        root.addView(label("Choose languages, then set your default pair. Changes are saved only when you tap Save."))
-        root.addView(label("From"))
+        root.addView(label("မူရင်းစာ၏ ဘာသာစကားကို အလိုအလျောက် သိရှိပေးမည်။ To တွင် ပြန်ဆိုလိုသည့်ဘာသာကို ရွေးပါ။"))
+        root.addView(label("⇄ နှိပ်သောအခါ ပြန်ဆိုမည့်ဘာသာ"))
         sourceSpinner = Spinner(this)
         root.addView(sourceSpinner)
         root.addView(label("To"))
         targetSpinner = Spinner(this)
         root.addView(targetSpinner)
-        root.addView(label("Built-in keys: Myanmar and English. For other scripts, paste text or hold the EN / မြန်မာ key to switch keyboards."))
+        root.addView(label("Built-in keys: Myanmar and English. For other scripts, paste text or hold the globe key to switch keyboards."))
+        root.addView(label("မွန်: အဘိဓာန် + AI · တိုင်းရင်းသားဘာသာများကို စမ်းသပ်ပြန်ဆိုပေးသည်။ ရလဒ်စစ်ဆေးပါ။"))
         search = EditText(this).apply {
             hint = "Search language / code / မြန်မာ"
             setSingleLine(true)

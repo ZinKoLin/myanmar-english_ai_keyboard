@@ -13,6 +13,7 @@ class EmojiPanel(
     private val insert: (String) -> Unit,
     private val backspace: () -> Unit,
     private val configureDelete: (View) -> Unit,
+    private val stickers: () -> Unit,
     private val close: () -> Unit
 ) : LinearLayout(context) {
     private val groups = linkedMapOf(
@@ -43,6 +44,11 @@ class EmojiPanel(
             configureDelete(this)
         }, LayoutParams(0, dp(44), 1f))
         addView(header)
+        addView(TextView(context).apply {
+            text = "Stickers / ပုံနှင့် GIF  ›"; textSize = 14f; gravity = Gravity.CENTER
+            setTextColor(Color.rgb(168, 199, 250)); contentDescription = "Open stickers"
+            setOnClickListener { stickers() }
+        }, LayoutParams(-1, dp(36)))
         grid = GridView(context).apply {
             numColumns = 7
             verticalSpacing = dp(4)
@@ -65,6 +71,7 @@ class EmojiPanel(
                     gravity = Gravity.CENTER
                     setTextColor(Color.BLACK)
                     contentDescription = "Insert emoji " + values[position]
+                    setOnClickListener { insert(values[position]) }
                     layoutParams = AbsListView.LayoutParams(LayoutParams.MATCH_PARENT, dp(48))
                 }
         }
